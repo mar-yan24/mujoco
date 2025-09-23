@@ -345,6 +345,8 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       d->act_dot[act_last] = mju_muscleDynamics(
           ctrl[i], d->act[act_last], prm);
       break;
+    case mjDYN_COMPLIANT_MTU:             // compliant MTU from Song
+      break;
 
     default:                        // user dynamics
       if (mjcb_act_dyn) {
@@ -413,7 +415,8 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
                             m->actuator_acc0[i],
                             prm);
       break;
-
+    case mjGAIN_COMPLIANT_MTU:             // compliant MTU from Song
+      break;
     default:                        // user gain
       if (mjcb_act_gain) {
         gain = mjcb_act_gain(m, d, i);

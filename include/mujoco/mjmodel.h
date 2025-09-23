@@ -232,6 +232,7 @@ typedef enum mjtDyn_ {            // type of actuator dynamics
   mjDYN_FILTER,                   // linear filter: da/dt = (u-a) / tau
   mjDYN_FILTEREXACT,              // linear filter: da/dt = (u-a) / tau, with exact integration
   mjDYN_MUSCLE,                   // piece-wise linear filter with two time constants
+  mjDYN_COMPLIANT_MTU,            // compliant MTU from Song
   mjDYN_USER                      // user-defined dynamics type
 } mjtDyn;
 
@@ -240,6 +241,7 @@ typedef enum mjtGain_ {           // type of actuator gain
   mjGAIN_FIXED        = 0,        // fixed gain
   mjGAIN_AFFINE,                  // const + kp*length + kv*velocity
   mjGAIN_MUSCLE,                  // muscle FLV curve computed by mju_muscleGain()
+  mjGAIN_COMPLIANT_MTU,           // compliant MTU from Song
   mjGAIN_USER                     // user-defined gain type
 } mjtGain;
 
