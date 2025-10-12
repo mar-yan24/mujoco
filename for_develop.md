@@ -7,6 +7,12 @@ winget install -e --id Microsoft.VisualStudio.2022.BuildTools
 
 in the `x64 Native Tools Command Prompt for VS 2022`
 
+or
+
+```bash
+"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+```
+
 ```bash
 cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja -DCMAKE_BUILD_TYPE=Release
 ```
