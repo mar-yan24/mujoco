@@ -691,23 +691,25 @@ const mjMap mark_map[mark_sz] = {
 
 
 // dyn type
-const int dyn_sz = 6;
+const int dyn_sz = 7;
 const mjMap dyn_map[dyn_sz] = {
   {"none",        mjDYN_NONE},
   {"integrator",  mjDYN_INTEGRATOR},
   {"filter",      mjDYN_FILTER},
   {"filterexact", mjDYN_FILTEREXACT},
   {"muscle",      mjDYN_MUSCLE},
+  {"compliant_mtu", mjDYN_COMPLIANT_MTU},
   {"user",        mjDYN_USER}
 };
 
 
 // gain type
-const int gain_sz = 4;
+const int gain_sz = 5;
 const mjMap gain_map[gain_sz] = {
   {"fixed",       mjGAIN_FIXED},
   {"affine",      mjGAIN_AFFINE},
   {"muscle",      mjGAIN_MUSCLE},
+  {"compliant_mtu", mjGAIN_COMPLIANT_MTU},
   {"user",        mjGAIN_USER}
 };
 

@@ -37,9 +37,10 @@ typedef enum mjtState_ {          // state elements
   mjSTATE_MOCAP_POS     = 1<<9,   // positions of mocap bodies
   mjSTATE_MOCAP_QUAT    = 1<<10,  // orientations of mocap bodies
   mjSTATE_USERDATA      = 1<<11,  // user data
-  mjSTATE_PLUGIN        = 1<<12,  // plugin state
+  mjSTATE_MUSCLE        = 1<<12,  // compliant muscle states
+  mjSTATE_PLUGIN        = 1<<13,  // plugin state
 
-  mjNSTATE              = 13,     // number of state elements
+  mjNSTATE              = 14,     // number of state elements
 
   // convenience values for commonly used state specifications
   mjSTATE_PHYSICS       = mjSTATE_QPOS | mjSTATE_QVEL | mjSTATE_ACT,
@@ -219,6 +220,12 @@ struct mjData_ {
   mjtNum* act;               // actuator activation                              (na x 1)
   mjtNum* qacc_warmstart;    // acceleration used for warmstart                  (nv x 1)
   mjtNum* plugin_state;      // plugin state                                     (npluginstate x 1)
+  
+  // compliant muscle states (activation A is stored in act array)
+  mjtNum* muscle_l_ce;       // contractile element length                      (na x 1)
+  mjtNum* muscle_v_ce;       // contractile element velocity                    (na x 1)
+  mjtNum* muscle_l_se;      // series elastic element length                  (na x 1)
+  mjtNum* muscle_F_mtu;      // muscle-tendon unit force                        (na x 1)
 
   // control
   mjtNum* ctrl;              // control                                          (nu x 1)

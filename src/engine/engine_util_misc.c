@@ -1501,3 +1501,291 @@ mjtNum mju_sigmoid(mjtNum x) {
   // solution of f(0) = f'(0) = f''(0) = 0, f(1) = 1, f'(1) = f''(1) = 0
   return x*x*x * (3*x * (2*x - 5) + 10);
 }
+
+
+
+//------------------------------ Compliant Muscle Helpers (Song-inspired) ------------------------------
+
+// inverse force-velocity relationship for contractile element
+// Python (seungmoon_muscle.py):
+// def fn_inv_f_vce0(f_vce0, K, N):
+//     if f_vce0 <= 1:
+//         v_ce0 = (f_vce0 - 1)/(K*f_vce0 + 1)
+//     elif f_vce0 > 1 and f_vce0 <= N:
+//         temp = (f_vce0 - N)/(f_vce0 - N + 1)
+//         v_ce0 = (temp + 1)/(1 - 7.56*K*temp)
+//     else: # elif f_vce0 > N:
+//         v_ce0 = .01*(f_vce0 - N) + 1
+//     return v_ce0
+mjtNum mju_compliantMuscleInvFvce0(mjtNum f_vce0, mjtNum K, mjtNum N) {
+  if (f_vce0 <= 1) {
+    return (f_vce0 - 1)/(K*f_vce0 + 1);
+  } else if (f_vce0 <= N) {
+    mjtNum temp = (f_vce0 - N)/(f_vce0 - N + 1);
+    return (temp + 1)/(1 - 7.56*K*temp);
+  } else {
+    return 0.01*(f_vce0 - N) + 1;
+  }
+}
+
+
+// force-length relationship for contractile element
+// Python (seungmoon_muscle.py):
+// def fn_f_lce0(l_ce0, w, c):
+//     f_lce0 = np.exp(c*np.abs((l_ce0-1)/(w))**3)
+//     return f_lce0
+mjtNum mju_compliantMuscleFlce0(mjtNum l_ce0, mjtNum w, mjtNum c) {
+  mjtNum x = mju_abs((l_ce0 - 1.0) / w);
+  return mju_exp(c * x * x * x);
+}
+
+
+// passive force for series elastic and parallel elastic elements
+// Python (seungmoon_muscle.py):
+// def fn_f_p0(l0, e_ref):
+//     if l0 > 1:
+//         f_p0 = ((l0 - 1)/(e_ref))**2
+//     else:
+//         f_p0 = 0
+//     return f_p0
+mjtNum mju_compliantMuscleFp0(mjtNum l0, mjtNum e_ref) {
+  if (l0 > 1.0) {
+    mjtNum x = (l0 - 1.0) / e_ref;
+    return x * x;
+  }
+  return 0.0;
+}
+
+
+// extended passive force for bearing element
+// Python (seungmoon_muscle.py):
+// def fn_f_p0_ext(l0, e_ref, e_ref2):
+//     if l0 < e_ref2:
+//         f_p0 = ((l0 - e_ref2)/(e_ref))**2
+//     else:
+//         f_p0 = 0
+//     return f_p0
+mjtNum mju_compliantMuscleFp0Ext(mjtNum l0, mjtNum e_ref, mjtNum e_ref2) {
+  if (l0 < e_ref2) {
+    mjtNum x = (l0 - e_ref2) / e_ref;
+    return x * x;
+  }
+  return 0.0;
+}
+
+
+//------------------------------ Compliant Muscle State Management ------------------------------
+
+// Extract muscle parameters from gainprm
+typedef struct {
+  mjtNum F_max;      // Maximum force
+  mjtNum l_opt;      // Optimal muscle length
+  mjtNum l_slack;    // Slack tendon length
+  mjtNum v_max;      // Maximum contraction velocity
+  mjtNum r1;         // Moment arm 1
+  mjtNum phi1_ref;   // Reference angle 1
+  mjtNum rho;        // Scaling factor
+  mjtNum r2;         // Moment arm 2 (optional)
+  mjtNum phi2_ref;   // Reference angle 2 (optional)
+} mjCompliantMuscleParams;
+
+void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id, 
+                                     mjCompliantMuscleParams* params) {
+  mjtNum* gainprm = m->actuator_gainprm + mjNGAIN * actuator_id;
+  
+  // DEBUG:: Print raw gainprm values
+  // printf("DEBUG:: mju_compliantMuscleExtractParams - actuator_id=%d\n", actuator_id);
+  // for (int i = 0; i < mjNGAIN; i++) {
+  //   printf("DEBUG::   gainprm[%d] = %.6f\n", i, gainprm[i]);
+  // }
+  
+  // Extract parameters in order: F_max, l_opt, l_slack, v_max, r1, phi1_ref, rho, r2, phi2_ref
+  params->F_max = gainprm[0];
+  params->l_opt = gainprm[1];
+  params->l_slack = gainprm[2];
+  params->v_max = gainprm[3];
+  params->r1 = gainprm[4];
+  params->phi1_ref = gainprm[5];
+  params->rho = gainprm[6];
+  params->r2 = (m->actuator_gainprm[mjNGAIN * actuator_id + 7] > 0) ? gainprm[7] : 0.0;
+  params->phi2_ref = (m->actuator_gainprm[mjNGAIN * actuator_id + 8] > 0) ? gainprm[8] : 0.0;
+  
+  // DEBUG:: Print extracted parameters
+  // printf("DEBUG:: Extracted parameters:\n");
+  // printf("DEBUG::   F_max = %.6f\n", params->F_max);
+  // printf("DEBUG::   l_opt = %.6f\n", params->l_opt);
+  // printf("DEBUG::   l_slack = %.6f\n", params->l_slack);
+  // printf("DEBUG::   v_max = %.6f\n", params->v_max);
+  // printf("DEBUG::   r1 = %.6f\n", params->r1);
+  // printf("DEBUG::   phi1_ref = %.6f\n", params->phi1_ref);
+  // printf("DEBUG::   rho = %.6f\n", params->rho);
+  // printf("DEBUG::   r2 = %.6f\n", params->r2);
+  // printf("DEBUG::   phi2_ref = %.6f\n", params->phi2_ref);
+}
+
+// Initialize compliant muscle states (based on Python reset function)
+void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
+  // Initialize muscle states for all actuators
+  for (int i = 0; i < m->na; i++) {
+    if (m->actuator_gaintype[i] == mjGAIN_COMPLIANT_MTU) {
+      // Extract muscle parameters
+      mjCompliantMuscleParams params;
+      mju_compliantMuscleExtractParams(m, i, &params);
+      
+      // Initialize states based on Python reset function
+      d->act[i] = 0.0;               // A = A_init (from Python: self.A_init = .01)
+      d->muscle_v_ce[i] = 0.0;        // v_ce = 0 (from Python: self.v_ce = 0)
+      d->muscle_F_mtu[i] = 0.0;       // F_mtu = 0 (from Python: self.F_mtu = 0)
+      
+      // Calculate initial l_ce based on actual tendon length from MuJoCo
+      // Use actual tendon length instead of theoretical calculation
+      mjtNum l_mtu = d->actuator_length[i];  // Use actual tendon length from MuJoCo
+      mjtNum l_ce = mju_max(0.01, l_mtu - params.l_slack);
+      d->muscle_l_ce[i] = l_ce;
+      
+      // Calculate initial l_se
+      mjtNum l_se = l_mtu - l_ce;
+      d->muscle_l_se[i] = l_se;
+      
+      // DEBUG:: Print initialization values
+      // printf("DEBUG:: mju_compliantMuscleInit - actuator_id=%d\n", i);
+      // printf("DEBUG::   l_mtu=%.6f, l_slack=%.6f, l_ce=%.6f, l_se=%.6f\n", 
+      //        l_mtu, params.l_slack, l_ce, l_se);
+    }
+  }
+}
+
+
+// Initialize compliant muscle states with joint angles (more accurate reset)
+void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id, 
+                              mjtNum phi1, mjtNum phi2) {
+  if (m->actuator_gaintype[actuator_id] != mjGAIN_COMPLIANT_MTU) {
+    return;
+  }
+  
+  // Extract muscle parameters
+  mjCompliantMuscleParams params;
+  mju_compliantMuscleExtractParams(m, actuator_id, &params);
+  
+  // Initialize states based on Python reset function
+  d->act[actuator_id] = 0.01;               // A = A_init
+  d->muscle_v_ce[actuator_id] = 0.0;        // v_ce = 0
+  d->muscle_F_mtu[actuator_id] = 0.0;       // F_mtu = 0
+  
+  // Use actual tendon length from MuJoCo instead of theoretical calculation
+  mjtNum l_mtu = d->actuator_length[actuator_id];  // Use actual tendon length from MuJoCo
+  
+  // Calculate initial l_ce with minimum length constraint
+  mjtNum l_ce = mju_max(0.01, l_mtu - params.l_slack);
+  d->muscle_l_ce[actuator_id] = l_ce;
+  
+  // Calculate initial l_se
+  mjtNum l_se = l_mtu - l_ce;
+  d->muscle_l_se[actuator_id] = l_se;
+}
+
+
+// ECC (Excitation-Contraction Coupling) dynamics
+mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep) {
+  // ECC parameters (from seungmoon_muscle.py)
+  mjtNum TAU_ACT = 0.01;    // Activation time constant
+  mjtNum TAU_DACT = 0.04;   // Deactivation time constant
+  
+  // Clamp S to valid range [0.01, 1.0]
+  S = mju_clip(S, 0.01, 1.0);
+  
+  // Choose time constant based on activation direction
+  mjtNum tau = (S > A) ? TAU_ACT : TAU_DACT;
+  
+  // ECC dynamics: dA/dt = (S - A) / tau
+  mjtNum act_dot = (S - A) / tau;
+  
+  return A + act_dot * timestep;
+}
+
+
+// Main compliant muscle update function (equivalent to update_inter)
+void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id, 
+                               mjtNum S, mjtNum tendon_length, mjtNum tendon_velocity) {
+  // DEBUG:: Print input parameters
+  // printf("DEBUG:: mju_compliantMuscleUpdate - actuator_id=%d, S=%.6f, tendon_length=%.6f, tendon_velocity=%.6f\n", 
+  //        actuator_id, S, tendon_length, tendon_velocity);
+  
+  // Extract muscle parameters
+  mjCompliantMuscleParams params;
+  mju_compliantMuscleExtractParams(m, actuator_id, &params);
+  
+  // Get current states
+  mjtNum A = d->act[actuator_id];  // Use existing act array
+  mjtNum l_ce = d->muscle_l_ce[actuator_id];
+  mjtNum v_ce = d->muscle_v_ce[actuator_id];
+  // printf("DEBUG::   states(in): A=%.6f l_ce=%.6f v_ce=%.6f\n", A, l_ce, v_ce);
+  
+  // ECC: update activation
+  A = mju_compliantMuscleECC(S, A, m->opt.timestep);
+  d->act[actuator_id] = A;  // Store in existing act array
+  // printf("DEBUG::   ECC: A_updated=%.6f (S=%.6f)\n", A, S);
+  
+  // Use MuJoCo's computed tendon length directly (no joint angle calculation needed)
+  mjtNum l_mtu = tendon_length;  // This is the actual MTU length from MuJoCo
+  
+  // Update muscle state
+  mjtNum l_se = l_mtu - l_ce;
+  d->muscle_l_se[actuator_id] = l_se;
+  // printf("DEBUG::   geometry: l_mtu=%.6f l_se=%.6f (ratio l_se/l_slack=%.6f)\n",
+  //        l_mtu, l_se, params.l_slack > 0 ? l_se/params.l_slack : 0.0);
+  
+  // Normalized lengths
+  mjtNum l_ce0 = l_ce / params.l_opt;
+  mjtNum l_se0 = l_se / params.l_slack;
+  // note: safety checks removed per request
+  
+  // Force calculations (using constants from seungmoon_muscle.py)
+  mjtNum W = 0.56;
+  mjtNum C = mju_log(0.05);
+  mjtNum N = 1.5;
+  mjtNum K = 5.0;
+  mjtNum E_REF = 0.04;
+  mjtNum E_REF_PE = W;
+  mjtNum E_REF_BE = 0.5 * W;
+  mjtNum E_REF_BE2 = 1.0 - W;
+  
+  // Force-length and force-velocity relationships
+  mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
+  mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, E_REF_BE, E_REF_BE2);
+  mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
+  mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
+  
+  // DEBUG:: Print intermediate force calculations
+  // printf("DEBUG:: Force calculations:\n");
+  // printf("DEBUG::   l_ce0=%.6f, l_se0=%.6f, A=%.6f\n", l_ce0, l_se0, A);
+  // printf("DEBUG::   f_se0=%.6f, f_be0=%.6f, f_pe0=%.6f, f_lce0=%.6f\n", f_se0, f_be0, f_pe0, f_lce0);
+  
+  // Velocity-force relationship
+  mjtNum denom = (f_pe0 + A * f_lce0);
+  // printf("DEBUG::   fvce denom=%.9f\n", denom);
+  mjtNum f_vce0 = (f_se0 + f_be0) / denom;
+  mjtNum v_ce0 = mju_compliantMuscleInvFvce0(f_vce0, K, N);
+  // note: clamps removed per request
+  
+  // DEBUG:: Print velocity calculations
+  // printf("DEBUG:: Velocity calculations:\n");
+  // printf("DEBUG::   f_vce0=%.6f, v_ce0=%.6f\n", f_vce0, v_ce0);
+  
+  // Update states
+  v_ce = params.l_opt * params.v_max * v_ce0;
+  l_ce = l_ce + v_ce * m->opt.timestep;
+  
+  d->muscle_v_ce[actuator_id] = v_ce;
+  d->muscle_l_ce[actuator_id] = l_ce;
+  d->muscle_F_mtu[actuator_id] = params.F_max * f_se0;
+  
+  // DEBUG:: Print final results
+  // printf("DEBUG:: mju_compliantMuscleUpdate results:\n");
+  // printf("DEBUG::   A = %.6f\n", A);
+  // printf("DEBUG::   l_ce = %.6f\n", l_ce);
+  // printf("DEBUG::   v_ce = %.6f\n", v_ce);
+  // printf("DEBUG::   l_se = %.6f\n", l_se);
+  // printf("DEBUG::   F_mtu = %.6f\n", params.F_max * f_se0);
+  // printf("DEBUG::   f_se0 = %.6f\n", f_se0);
+}

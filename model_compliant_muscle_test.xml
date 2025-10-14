@@ -1,0 +1,81 @@
+<mujoco model="compliant_muscle_test">
+  <option timestep="0.001" gravity="0 0 -9.81"/>
+
+  <default>
+    <!-- Compliant muscle default class -->
+    <default class="compliant_muscle">
+      <general biasprm="0" biastype="none" ctrllimited="true" ctrlrange="0 1" 
+               dynprm="0.01 0.04" dyntype="compliant_mtu" 
+               gainprm="1000 0.1 0.03 10.0 0.05 0.0 1.0 0.0 0.0" 
+               gaintype="compliant_mtu"/>
+    </default>
+    
+    <!-- Standard muscle for comparison -->
+    <default class="standard_muscle">
+      <general biasprm="0.75 1.05 -1 400 0.5 1.6 1.5 1.3 1.2 0" biastype="muscle" 
+               ctrllimited="true" ctrlrange="0 1" 
+               dynprm="0.01 0.04 0 0 0 0 0 0 0 0" dyntype="muscle" 
+               gainprm="0.75 1.05 -1 400 0.5 1.6 1.5 1.3 1.2 0" 
+               gaintype="muscle"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="ground"/>
+    
+    <!-- Fixed anchor sites for tendons -->
+    <site name="fixed_c" pos="-0.15 0 0.1" size="0.005" rgba="0 0 1 1"/>
+    <site name="fixed_r" pos="0.15 0 0.1" size="0.005" rgba="0 1 0 1"/>
+
+    <!-- Point masses to be pulled by muscles -->
+    <body name="mass_c" pos="-0.15 0 0">
+      <joint name="slide_c" type="slide" axis="0 0 1" limited="false" range="-1 0.0" damping="2"/>
+      <site name="mass_c_site" pos="0 0 0" size="0.005" rgba="0 0 1 1"/>
+      <geom type="sphere" size="0.03" mass="1.0" rgba="0 0 1 1"/>
+    </body>
+    <body name="mass_r" pos="0.15 0 0">
+      <joint name="slide_r" type="slide" axis="0 0 1" limited="false" range="-1 0.0" damping="2"/>
+      <site name="mass_r_site" pos="0 0 0" size="0.005" rgba="0 1 0 1"/>
+      <geom type="sphere" size="0.03" mass="1.0" rgba="0 1 0 1"/>
+    </body>
+  </worldbody>
+
+  <!-- Tendon paths for muscles: fixed anchor to point mass site -->
+  <tendon>
+    <spatial name="tendon_c">
+      <site site="fixed_c"/>
+      <site site="mass_c_site"/>
+    </spatial>
+    <spatial name="tendon_r">
+      <site site="fixed_r"/>
+      <site site="mass_r_site"/>
+    </spatial>
+  </tendon>
+
+  <actuator>
+    <!-- Compliant muscle pulling left point mass -->
+    <general class="compliant_muscle" name="compliant_muscle_c" tendon="tendon_c"/>
+    
+    <!-- Standard muscle pulling right point mass (for comparison) -->
+    <muscle class="standard_muscle" name="standard_muscle_r" tendon="tendon_r" 
+            lengthrange="0.05 0.5"/>
+  </actuator>
+
+  <sensor>
+    <!-- Tendon length sensors -->
+    <tendonpos name="len_c" tendon="tendon_c"/>
+    <tendonpos name="len_r" tendon="tendon_r"/>
+    
+    <!-- Actuator force sensors -->
+    <actuatorfrc name="frc_c" actuator="compliant_muscle_c"/>
+    <actuatorfrc name="frc_r" actuator="standard_muscle_r"/>
+    
+    <!-- Joint position sensors -->
+    <jointpos name="pos_c" joint="slide_c"/>
+    <jointpos name="pos_r" joint="slide_r"/>
+    
+    <!-- Joint velocity sensors -->
+    <jointvel name="vel_c" joint="slide_c"/>
+    <jointvel name="vel_r" joint="slide_r"/>
+  </sensor>
+</mujoco>

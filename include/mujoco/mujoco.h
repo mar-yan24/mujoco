@@ -1215,6 +1215,20 @@ MJAPI mjtNum mju_muscleBias(mjtNum len, const mjtNum lengthrange[2],
 // Muscle activation dynamics, prm = (tau_act, tau_deact, smoothing_width).
 MJAPI mjtNum mju_muscleDynamics(mjtNum ctrl, mjtNum act, const mjtNum prm[3]);
 
+// Compliant muscle helper functions (Song-inspired).
+MJAPI mjtNum mju_compliantMuscleInvFvce0(mjtNum f_vce0, mjtNum K, mjtNum N);
+MJAPI mjtNum mju_compliantMuscleFlce0(mjtNum l_ce0, mjtNum w, mjtNum c);
+MJAPI mjtNum mju_compliantMuscleFp0(mjtNum l0, mjtNum e_ref);
+MJAPI mjtNum mju_compliantMuscleFp0Ext(mjtNum l0, mjtNum e_ref, mjtNum e_ref2);
+
+// Compliant muscle state management.
+MJAPI void mju_compliantMuscleInit(const mjModel* m, mjData* d);
+MJAPI void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id, 
+                                    mjtNum phi1, mjtNum phi2);
+MJAPI void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id, 
+                                     mjtNum S, mjtNum tendon_length, mjtNum tendon_velocity);
+MJAPI mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep);
+
 // Convert contact force to pyramid representation.
 MJAPI void mju_encodePyramid(mjtNum* pyramid, const mjtNum* force, const mjtNum* mu, int dim);
 
