@@ -1633,13 +1633,21 @@ void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
       mju_compliantMuscleExtractParams(m, i, &params);
       
       // Initialize states based on Python reset function
-      d->act[i] = 0.0;               // A = A_init (from Python: self.A_init = .01)
+      // Set activation A at the actuator's mapped activation slot
+      int act_first = m->actuator_actadr[i];
+      int act_last = act_first + m->actuator_actnum[i] - 1;
+      if (act_first >= 0 && m->actuator_actnum[i] > 0) {
+        d->act[act_last] = 0.01;  // A_init
+      }
       d->muscle_v_ce[i] = 0.0;        // v_ce = 0 (from Python: self.v_ce = 0)
       d->muscle_F_mtu[i] = 0.0;       // F_mtu = 0 (from Python: self.F_mtu = 0)
       
-      // Calculate initial l_ce based on actual tendon length from MuJoCo
-      // Use actual tendon length instead of theoretical calculation
-      mjtNum l_mtu = d->actuator_length[i];  // Use actual tendon length from MuJoCo
+      // Calculate initial l_ce based on tendon length from MuJoCo tendon arrays
+      int tendon_id = m->actuator_trnid[2*i];
+      if (tendon_id < 0 || tendon_id >= m->ntendon) {
+        mju_error("Invalid tendon_id in mju_compliantMuscleInit for actuator %d", i);
+      }
+      mjtNum l_mtu = d->ten_length[tendon_id];
       mjtNum l_ce = mju_max(0.01, l_mtu - params.l_slack);
       d->muscle_l_ce[i] = l_ce;
       
@@ -1667,13 +1675,21 @@ void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id,
   mjCompliantMuscleParams params;
   mju_compliantMuscleExtractParams(m, actuator_id, &params);
   
-  // Initialize states based on Python reset function
-  d->act[actuator_id] = 0.01;               // A = A_init
+  // Initialize states based on Python reset function (set activation at mapped slot)
+  int act_first = m->actuator_actadr[actuator_id];
+  int act_last = act_first + m->actuator_actnum[actuator_id] - 1;
+  if (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) {
+    d->act[act_last] = 0.01;
+  }
   d->muscle_v_ce[actuator_id] = 0.0;        // v_ce = 0
   d->muscle_F_mtu[actuator_id] = 0.0;       // F_mtu = 0
   
-  // Use actual tendon length from MuJoCo instead of theoretical calculation
-  mjtNum l_mtu = d->actuator_length[actuator_id];  // Use actual tendon length from MuJoCo
+  // Use tendon length from MuJoCo tendon arrays
+  int tendon_id = m->actuator_trnid[2*actuator_id];
+  if (tendon_id < 0 || tendon_id >= m->ntendon) {
+    mju_error("Invalid tendon_id in mju_compliantMuscleReset for actuator %d", actuator_id);
+  }
+  mjtNum l_mtu = d->ten_length[tendon_id];
   
   // Calculate initial l_ce with minimum length constraint
   mjtNum l_ce = mju_max(0.01, l_mtu - params.l_slack);
