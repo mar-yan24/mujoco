@@ -511,14 +511,14 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       // CSV log record
       log_compliant_mtu_header_if_needed();
       // stop simulation if time was reset
-      if (g_last_time_seen >= 0.0 && d->time < g_last_time_seen) {
-        if (g_compliant_mtu_log) {
-          // fprintf(g_compliant_mtu_log, "# ABORT: time reset detected (prev=%.9f, now=%.9f)\n",
-          //         g_last_time_seen, d->time);
-          fflush(g_compliant_mtu_log);
-        }
-        mju_error("DEBUG ABORT: simulation time reset detected");
-      }
+      // if (g_last_time_seen >= 0.0 && d->time < g_last_time_seen) {
+      //   if (g_compliant_mtu_log) {
+      //     // fprintf(g_compliant_mtu_log, "# ABORT: time reset detected (prev=%.9f, now=%.9f)\n",
+      //     //         g_last_time_seen, d->time);
+      //     fflush(g_compliant_mtu_log);
+      //   }
+      //   mju_error("DEBUG ABORT: simulation time reset detected");
+      // }
       g_last_time_seen = d->time;
       // compute intermediate values for logging (single-row write below)
       mjtNum* gainprm = m->actuator_gainprm + mjNGAIN * i;
