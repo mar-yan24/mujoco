@@ -1625,8 +1625,8 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
 
 // Initialize compliant muscle states (based on Python reset function)
 void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
-  // Initialize muscle states for all actuators
-  for (int i = 0; i < m->na; i++) {
+  // Initialize muscle states for user actuators only (nu, not na)
+  for (int i = 0; i < m->nu; i++) {
     if (m->actuator_gaintype[i] == mjGAIN_COMPLIANT_MTU) {
       // Extract muscle parameters
       mjCompliantMuscleParams params;
@@ -1663,7 +1663,7 @@ void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
   }
 }
 
-
+// Not used
 // Initialize compliant muscle states with joint angles (more accurate reset)
 void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id, 
                               mjtNum phi1, mjtNum phi2) {
@@ -1731,15 +1731,20 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   mjCompliantMuscleParams params;
   mju_compliantMuscleExtractParams(m, actuator_id, &params);
   
-  // Get current states
-  mjtNum A = d->act[actuator_id];  // Use existing act array
+  // Get current states from correct activation slot
+  int act_first = m->actuator_actadr[actuator_id];
+  int act_last = act_first + m->actuator_actnum[actuator_id] - 1;
+  mjtNum A = (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) ? d->act[act_last] : 0.01;
   mjtNum l_ce = d->muscle_l_ce[actuator_id];
   mjtNum v_ce = d->muscle_v_ce[actuator_id];
   // printf("DEBUG::   states(in): A=%.6f l_ce=%.6f v_ce=%.6f\n", A, l_ce, v_ce);
   
   // ECC: update activation
   A = mju_compliantMuscleECC(S, A, m->opt.timestep);
-  d->act[actuator_id] = A;  // Store in existing act array
+  // Store in correct activation slot
+  if (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) {
+    d->act[act_last] = A;
+  }
   // printf("DEBUG::   ECC: A_updated=%.6f (S=%.6f)\n", A, S);
   
   // Use MuJoCo's computed tendon length directly (no joint angle calculation needed)

@@ -300,19 +300,7 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
   mjtNum gain, bias, tau;
   mjtNum *prm, *force = d->actuator_force;
   
-  // DEBUG:: Initialize compliant muscles if needed
-  // Check if muscle state arrays are allocated, if not allocate them
-  if (!d->muscle_l_ce && nu > 0) {
-    // printf("DEBUG:: Allocating muscle state arrays for %d actuators\n", nu);
-    d->muscle_l_ce = (mjtNum*)mju_malloc(nu * sizeof(mjtNum));
-    d->muscle_v_ce = (mjtNum*)mju_malloc(nu * sizeof(mjtNum));
-    d->muscle_l_se = (mjtNum*)mju_malloc(nu * sizeof(mjtNum));
-    d->muscle_F_mtu = (mjtNum*)mju_malloc(nu * sizeof(mjtNum));
-    
-    // Initialize muscle states
-    mju_compliantMuscleInit(m, d);
-    // printf("DEBUG:: Initialized compliant muscles\n");
-  }
+  // Muscle state arrays are initialized in _resetData (engine_io.c)
 
   // clear actuator_force
   mju_zero(force, nu);
@@ -469,7 +457,7 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       mju_compliantMuscleUpdate(m, d, i, ctrl[i], tendon_length, tendon_velocity);
       // Use the computed muscle force as gain
       gain = d->muscle_F_mtu[i];
-      printf("CompliantMTU gain [id=%d]: %.9f\n", i, gain);
+      // printf("CompliantMTU gain [id=%d]: %.9f\n", i, gain);
       break;
     }
     default:                        // user gain
