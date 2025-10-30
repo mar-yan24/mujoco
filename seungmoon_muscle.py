@@ -140,7 +140,7 @@ class MusculoTendonJoint(object):
         v_ce0 = fn_inv_f_vce0(f_vce0, MTU.K, MTU.N)
 
         self.v_ce = self.l_opt*self.v_max*v_ce0
-        self.l_ce = max(0.01, self.l_ce + self.v_ce*self.TIMESTEP_inter)  # 최소 길이 제한
+        self.l_ce = max(0.01, self.l_ce + self.v_ce*self.TIMESTEP_inter)
         self.F_mtu = self.F_max*f_se0
 
     def update(self, S, phi1, phi2 = None):
@@ -281,7 +281,6 @@ def single_step_calculation_example():
     TIMESTEP = 0.001  # 1ms timestep
     
     # Muscle parameters (example values for a typical muscle)
-    # 수정된 파라미터: 현실적인 근육 모델
     muscle_params = {
         'F_max': 1000.0,      # Maximum force [N]
         'l_opt': 0.2,          # Optimal muscle length [m] - 원래대로
@@ -475,7 +474,7 @@ def compare_single_vs_multistep():
     
     # Test with same inputs
     S = 0.6
-    phi1 = 0 * np.pi / 180  # 더 작은 각도로 변경
+    phi1 = 0 * np.pi / 180
     
     print(f"Testing with S={S}, phi1={phi1*180/np.pi:.1f} deg")
     print(f"Timestep: {TIMESTEP} s")
