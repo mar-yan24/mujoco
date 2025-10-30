@@ -1819,6 +1819,16 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
     f_vce0 = (f_se0 + f_be0) / denom;
     v_ce0 = mju_compliantMuscleInvFvce0(f_vce0, K, N);
   }
+
+  // original: f_vce0 = (f_se0 - f_pe0) / (A * f_lce0)
+  // denom = A * f_lce0;
+  // if (denom <= 1e-12) {
+  //   v_ce0 = 0.0;
+  //   f_vce0 = 0.0;
+  // } else {
+  //   f_vce0 = (f_se0 - f_pe0) / denom;
+  //   v_ce0 = mju_compliantMuscleInvFvce0(f_vce0, K, N);
+  // }
   // note: clamps removed per request
   
   // DEBUG:: Print velocity calculations
@@ -1836,20 +1846,14 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   //   v_ce = -v_ce_cap;
   // }
 
-  l_ce = l_ce + v_ce * m->opt.timestep;
-  
-  d->muscle_v_ce[actuator_id] = v_ce;
-  d->muscle_l_ce[actuator_id] = l_ce;
-  mjtNum F_mtu = params.F_max * f_se0;
-  d->muscle_F_mtu[actuator_id] = F_mtu;
-  
-  // Log values computed in this function
+  // Log values computed in this function *before* updating l_ce
   log_compliant_mtu_header_if_needed();
   g_last_time_seen = d->time;
   if (g_compliant_mtu_log) {
+    mjtNum F_mtu = params.F_max * f_se0;
     mjtNum force_applied = -F_mtu;
-    
-    // Write log row with values computed in this function
+
+    // Write log row with values *before* l_ce is updated
     fprintf(g_compliant_mtu_log,
             "%f,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f\n",
             d->time,                      // time
@@ -1860,8 +1864,8 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
             tendon_velocity,              // tendon_velocity
             m->actuator_trntype[actuator_id],  // trntype
             d->moment_rownnz[actuator_id],     // moment_rownnz
-            l_ce,                         // l_ce (updated)
-            v_ce,                         // v_ce (updated)
+            l_ce,                         // l_ce (before update)
+            v_ce,                         // v_ce
             l_se,                         // l_se
             F_mtu,                        // F_mtu
             l_ce0,                        // l_ce0
@@ -1880,4 +1884,10 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
             params.v_max);                // v_max
     fflush(g_compliant_mtu_log);
   }
+
+  // Update contractile element state
+  l_ce = l_ce + v_ce * m->opt.timestep;
+  d->muscle_v_ce[actuator_id] = v_ce;
+  d->muscle_l_ce[actuator_id] = l_ce;
+  d->muscle_F_mtu[actuator_id] = params.F_max * f_se0;
 }
