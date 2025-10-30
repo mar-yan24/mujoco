@@ -46,24 +46,6 @@
 
 
 
-// simple CSV logger for compliant MTU debugging
-static FILE* g_compliant_mtu_log = NULL;
-static void log_compliant_mtu_header_if_needed(void) {
-  if (!g_compliant_mtu_log) {
-    g_compliant_mtu_log = fopen("compliant_mtu_log.csv", "w");
-    if (g_compliant_mtu_log) {
-      fprintf(g_compliant_mtu_log,
-              "time,actuator_id,ctrl,act,tendon_length,tendon_velocity,trntype,moment_rownnz,"
-              "l_ce,v_ce,l_se,F_mtu,"
-              "l_ce0,l_se0,f_se0,f_be0,f_pe0,f_lce0,fvce_denom,f_vce0,v_ce0,"
-              "force_applied,F_max,l_opt,l_slack,v_max\n");
-      fflush(g_compliant_mtu_log);
-    }
-  }
-}
-
-// detect time reset and abort simulation if time moves backwards
-static mjtNum g_last_time_seen = -1.0;
 
 //--------------------------- check values ---------------------------------------------------------
 
@@ -452,11 +434,21 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       }
       mjtNum tendon_length = d->ten_length[tendon_id];
       mjtNum tendon_velocity = d->ten_velocity[tendon_id];
+      int act_first_dbg2 = m->actuator_actadr[i];
+      int act_last_dbg2 = act_first_dbg2 + m->actuator_actnum[i] - 1;
+      mjtNum A_before = (act_first_dbg2 >= 0 && m->actuator_actnum[i] > 0) ? d->act[act_last_dbg2] : 0.0;
 
       // Update compliant muscle state using tendon length directly
       mju_compliantMuscleUpdate(m, d, i, ctrl[i], tendon_length, tendon_velocity);
       // Use the computed muscle force as gain
       gain = d->muscle_F_mtu[i];
+      // DEBUG: report per-actuator MTU force and tendon length
+      if (0) {
+        mjtNum A_after = (act_first_dbg2 >= 0 && m->actuator_actnum[i] > 0) ? d->act[act_last_dbg2] : 0.0;
+        printf("DEBUG::  MTU i=%d ctrl=%.6f A_before=%.6f A_after=%.6f F_mtu=%.9f tend_len=%.9f tend_vel=%.9f\n",
+               i, (double)ctrl[i], (double)A_before, (double)A_after,
+               (double)gain, (double)tendon_length, (double)tendon_velocity);
+      }
       // printf("CompliantMTU gain [id=%d]: %.9f\n", i, gain);
       break;
     }
@@ -470,107 +462,9 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
 
     // set force = gain .* [ctrl/act]
     if ((mjtGain)m->actuator_gaintype[i] == mjGAIN_COMPLIANT_MTU) {
-      // Debug: print states and params before computing final force
-      mjtNum F_max = prm[0];
-      mjtNum l_opt = prm[1];
-      mjtNum l_slack = prm[2];
-      mjtNum A_now = d->act[m->actuator_actadr[i] + m->actuator_actnum[i] - 1 >= 0 ?
-                        (m->actuator_actadr[i] + m->actuator_actnum[i] - 1) : 0];
-      // printf("DEBUG:: CompliantMTU: pre-force check (id=%d)\n", i);
-      // printf("DEBUG::   ctrl=%.6f act=%.6f tend_len=%.6f tend_vel=%.6f\n",
-      //        ctrl[i], A_now, d->actuator_length[i], d->actuator_velocity[i]);
-      // printf("DEBUG::   params: F_max=%.6f l_opt=%.6f l_slack=%.6f\n",
-      //        F_max, l_opt, l_slack);
-      // printf("DEBUG::   states(before force): l_ce=%.6f v_ce=%.6f l_se=%.6f F_mtu=%.6f\n",
-      //        d->muscle_l_ce ? d->muscle_l_ce[i] : 0.0,
-      //        d->muscle_v_ce ? d->muscle_v_ce[i] : 0.0,
-      //        d->muscle_l_se ? d->muscle_l_se[i] : 0.0,
-      //        d->muscle_F_mtu ? d->muscle_F_mtu[i] : 0.0);
-
-      // recompute tendon kinematics for logging scope
-      int tendon_id_log = m->actuator_trnid[2*i];
-      if (tendon_id_log < 0 || tendon_id_log >= m->ntendon) {
-        mju_error("Invalid tendon_id (log) for actuator %d", i);
-      }
-      mjtNum tendon_length_log = d->ten_length[tendon_id_log];
-      mjtNum tendon_velocity_log = d->ten_velocity[tendon_id_log];
-      // (no stdout prints)
-
-      // CSV log record
-      log_compliant_mtu_header_if_needed();
-      // stop simulation if time was reset
-      // if (g_last_time_seen >= 0.0 && d->time < g_last_time_seen) {
-      //   if (g_compliant_mtu_log) {
-      //     // fprintf(g_compliant_mtu_log, "# ABORT: time reset detected (prev=%.9f, now=%.9f)\n",
-      //     //         g_last_time_seen, d->time);
-      //     fflush(g_compliant_mtu_log);
-      //   }
-      //   mju_error("DEBUG ABORT: simulation time reset detected");
-      // }
-      g_last_time_seen = d->time;
-      // compute intermediate values for logging (single-row write below)
-      mjtNum* gainprm = m->actuator_gainprm + mjNGAIN * i;
-      mjtNum F_max_log   = gainprm[0];
-      mjtNum l_opt_log   = gainprm[1];
-      mjtNum l_slack_log = gainprm[2];
-      mjtNum v_max_log   = gainprm[3];
-      mjtNum l_ce_log = d->muscle_l_ce ? d->muscle_l_ce[i] : 0.0;
-      mjtNum l_se_log = d->muscle_l_se ? d->muscle_l_se[i] : (tendon_length_log - l_ce_log);
-      mjtNum l_ce0_log = l_opt_log ? (l_ce_log / l_opt_log) : 0.0;
-      mjtNum l_se0_log = l_slack_log ? (l_se_log / l_slack_log) : 0.0;
-      mjtNum W_log = 0.56;
-      mjtNum C_log = mju_log(0.05);
-      mjtNum E_REF_log = 0.04;
-      mjtNum E_REF_BE_log = 0.5 * W_log;
-      mjtNum E_REF_BE2_log = 1.0 - W_log;
-      mjtNum f_se0_log = mju_compliantMuscleFp0(l_se0_log, E_REF_log);
-      mjtNum f_be0_log = mju_compliantMuscleFp0Ext(l_ce0_log, E_REF_BE_log, E_REF_BE2_log);
-      mjtNum f_pe0_log = mju_compliantMuscleFp0(l_ce0_log, W_log);
-      mjtNum f_lce0_log = mju_compliantMuscleFlce0(l_ce0_log, W_log, C_log);
-      mjtNum fvce_denom_log = f_pe0_log + A_now * f_lce0_log;
-      mjtNum f_vce0_log = fvce_denom_log != 0.0 ? (f_se0_log + f_be0_log) / fvce_denom_log : 0.0;
-      mjtNum v_ce0_log = mju_compliantMuscleInvFvce0(f_vce0_log, 5.0, 1.5);
-      mjtNum v_ce_log = l_opt_log * v_max_log * v_ce0_log;
-
-      // Safety guards removed per request
-
+      // Logging is now handled inside mju_compliantMuscleUpdate
       // Directly apply computed F_mtu as actuator force (no clipping)
       force[i] = -d->muscle_F_mtu[i];
-      if (g_compliant_mtu_log) {
-        // write full row in one call to avoid partial lines
-        // Columns (26): time,actuator_id,ctrl,act,tendon_length,tendon_velocity,trntype,moment_rownnz,
-        // l_ce,v_ce,l_se,F_mtu,l_ce0,l_se0,f_se0,f_be0,f_pe0,f_lce0,fvce_denom,f_vce0,v_ce0,force_applied,F_max,l_opt,l_slack,v_max
-        fprintf(g_compliant_mtu_log,
-                "%f,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f\n",
-                d->time,                      // time
-                i,                            // actuator_id
-                ctrl[i],                      // ctrl
-                A_now,                        // act
-                tendon_length_log,            // tendon_length
-                tendon_velocity_log,          // tendon_velocity
-                m->actuator_trntype[i],       // trntype
-                d->moment_rownnz[i],          // moment_rownnz
-                l_ce_log,                     // l_ce
-                v_ce_log,                     // v_ce
-                l_se_log,                     // l_se
-                d->muscle_F_mtu[i], // F_mtu
-                l_ce0_log,                    // l_ce0
-                l_se0_log,                    // l_se0
-                f_se0_log,                    // f_se0
-                f_be0_log,                    // f_be0
-                f_pe0_log,                    // f_pe0
-                f_lce0_log,                   // f_lce0
-                fvce_denom_log,               // fvce_denom
-                f_vce0_log,                   // f_vce0
-                v_ce0_log,                    // v_ce0
-                force[i],                     // force_applied
-                F_max_log,                    // F_max
-                l_opt_log,                    // l_opt
-                l_slack_log,                  // l_slack
-                v_max_log);                   // v_max
-        fflush(g_compliant_mtu_log);
-      }
-      // no stdout prints; everything goes to CSV
     } else {
       if (m->actuator_actadr[i] == -1) {
         force[i] = gain * ctrl[i];

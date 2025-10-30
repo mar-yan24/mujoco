@@ -151,12 +151,12 @@ def plot_log(data: dict, out_path: str | None, show: bool, n: int = None) -> Non
     axs[2].axhline(0.0, color='k', linewidth=1, linestyle='--')
     axs[2].legend(); axs[2].set_ylabel("force [N]")
 
-    # Panel 4: normalized l_se
-    L = compute_len(t, data["l_se"]) 
-    l_se_slice = data["l_se"][:L]
-    if l_se_slice.size and np.max(np.abs(l_se_slice)) > 0:
-        axs[3].plot(t[:L], l_se_slice/np.max(np.abs(l_se_slice)), label="l_se norm")
-        axs[3].legend()
+    # Panel 4: normalized lengths
+    L = compute_len(t, data["l_se0"], data["l_ce0"])
+    axs[3].plot(t[:L], data["l_se0"][:L], label="l_se0")
+    axs[3].plot(t[:L], data["l_ce0"][:L], label="l_ce0")
+    axs[3].axhline(1.0, color='k', linewidth=1, linestyle='--')
+    axs[3].legend()
     axs[3].set_xlabel("time [s]")
 
     # Panel 5: Detailed FVCE internals (align lengths)
