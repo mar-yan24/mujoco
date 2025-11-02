@@ -1605,11 +1605,11 @@ typedef struct {
   mjtNum l_opt;      // Optimal muscle length
   mjtNum l_slack;    // Slack tendon length
   mjtNum v_max;      // Maximum contraction velocity
-  mjtNum r1;         // Moment arm 1
-  mjtNum phi1_ref;   // Reference angle 1
-  mjtNum rho;        // Scaling factor
-  mjtNum r2;         // Moment arm 2 (optional)
-  mjtNum phi2_ref;   // Reference angle 2 (optional)
+  mjtNum W;          // Force-length parameter
+  mjtNum C;          // Force-length parameter (log scale)
+  mjtNum N;          // Force-velocity parameter
+  mjtNum K;          // Force-velocity parameter
+  mjtNum E_REF;      // Reference strain
 } mjCompliantMuscleParams;
 
 void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id, 
@@ -1622,17 +1622,18 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
   //   printf("DEBUG::   gainprm[%d] = %.6f\n", i, gainprm[i]);
   // }
   
-  // Extract parameters in order: F_max, l_opt, l_slack, v_max, r1, phi1_ref, rho, r2, phi2_ref
+  // Extract parameters in order: F_max, l_opt, l_slack, v_max, W, C, N, K, E_REF
   params->F_max = gainprm[0];
   params->l_opt = gainprm[1];
   params->l_slack = gainprm[2];
   params->v_max = gainprm[3];
 
-  params->r1 = gainprm[4];
-  params->phi1_ref = gainprm[5];
-  params->rho = gainprm[6];
-  params->r2 = (m->actuator_gainprm[mjNGAIN * actuator_id + 7] > 0) ? gainprm[7] : 0.0;
-  params->phi2_ref = (m->actuator_gainprm[mjNGAIN * actuator_id + 8] > 0) ? gainprm[8] : 0.0;
+  // Force calculation parameters
+  params->W = gainprm[4];
+  params->C = gainprm[5];
+  params->N = gainprm[6];
+  params->K = gainprm[7];
+  params->E_REF = gainprm[8];
   
   // DEBUG:: Print extracted parameters
   // printf("DEBUG:: Extracted parameters:\n");
@@ -1640,11 +1641,11 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
   // printf("DEBUG::   l_opt = %.6f\n", params->l_opt);
   // printf("DEBUG::   l_slack = %.6f\n", params->l_slack);
   // printf("DEBUG::   v_max = %.6f\n", params->v_max);
-  // printf("DEBUG::   r1 = %.6f\n", params->r1);
-  // printf("DEBUG::   phi1_ref = %.6f\n", params->phi1_ref);
-  // printf("DEBUG::   rho = %.6f\n", params->rho);
-  // printf("DEBUG::   r2 = %.6f\n", params->r2);
-  // printf("DEBUG::   phi2_ref = %.6f\n", params->phi2_ref);
+  // printf("DEBUG::   W = %.6f\n", params->W);
+  // printf("DEBUG::   C = %.6f\n", params->C);
+  // printf("DEBUG::   N = %.6f\n", params->N);
+  // printf("DEBUG::   K = %.6f\n", params->K);
+  // printf("DEBUG::   E_REF = %.6f\n", params->E_REF);
 }
 
 // Initialize compliant muscle states (based on Python reset function)
@@ -1786,12 +1787,12 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   mjtNum l_se0 = l_se / params.l_slack;
   // note: safety checks removed per request
   
-  // Force calculations (using constants from seungmoon_muscle.py)
-  mjtNum W = 0.56;
-  mjtNum C = mju_log(0.05);
-  mjtNum N = 1.5;
-  mjtNum K = 5.0;
-  mjtNum E_REF = 0.04;// original: .04
+  // Force calculations (using parameters from gainprm)
+  mjtNum W = params.W;
+  mjtNum C = params.C;
+  mjtNum N = params.N;
+  mjtNum K = params.K;
+  mjtNum E_REF = params.E_REF;
   mjtNum E_REF_PE = W;
   mjtNum E_REF_BE = 0.5 * W;
   mjtNum E_REF_BE2 = 1.0 - W;
