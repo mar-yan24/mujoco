@@ -1703,7 +1703,7 @@ void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id,
   int act_first = m->actuator_actadr[actuator_id];
   int act_last = act_first + m->actuator_actnum[actuator_id] - 1;
   if (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) {
-    d->act[act_last] = 0.0;
+    d->act[act_last] = 0.01;
   }
   d->muscle_v_ce[actuator_id] = 0.0;        // v_ce = 0
   d->muscle_F_mtu[actuator_id] = 0.0;       // F_mtu = 0
@@ -1732,7 +1732,7 @@ mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep) {
   mjtNum TAU_DACT = 0.04;   // Deactivation time constant
   
   // Clamp S to valid range [0.0, 1.0] (allow true zero-excitation baseline)
-  S = mju_clip(S, 0.0, 1.0);
+  S = mju_clip(S, 0.01, 1.0);
   
   // Choose time constant based on activation direction
   mjtNum tau = (S > A) ? TAU_ACT : TAU_DACT;
