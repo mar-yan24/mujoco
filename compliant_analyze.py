@@ -32,6 +32,8 @@ def _to_int_or_neg1(s: str) -> int:
 def load_log_csv(path: str):
     times: List[float] = []
     actuator_id: List[int] = []
+    substep: List[int] = []
+    n_substeps: List[int] = []
     ctrl: List[float] = []
     act: List[float] = []
     tendon_length: List[float] = []
@@ -61,6 +63,8 @@ def load_log_csv(path: str):
         for row in reader:
             times.append(_to_float_or_nan(row.get("time", "")))
             actuator_id.append(_to_int_or_neg1(row.get("actuator_id", "")))
+            substep.append(_to_int_or_neg1(row.get("substep", "")))
+            n_substeps.append(_to_int_or_neg1(row.get("n_substeps", "")))
             ctrl.append(_to_float_or_nan(row.get("ctrl", "")))
             act.append(_to_float_or_nan(row.get("act", "")))
             tendon_length.append(_to_float_or_nan(row.get("tendon_length", "")))
@@ -88,6 +92,8 @@ def load_log_csv(path: str):
     return {
         "time": np.array(times),
         "actuator_id": np.array(actuator_id),
+        "substep": np.array(substep),
+        "n_substeps": np.array(n_substeps),
         "ctrl": np.array(ctrl),
         "act": np.array(act),
         "tendon_length": np.array(tendon_length),
@@ -114,7 +120,27 @@ def load_log_csv(path: str):
     }
 
 
-def plot_log(data: dict, out_path: str | None, show: bool, n: int = None) -> None:
+def filter_final_steps(data: dict) -> dict:
+    """Filter data to only include final averaged values (substep == -1)."""
+    if "substep" not in data:
+        return data
+    
+    substep = data["substep"]
+    
+    # Create mask: keep only rows where substep == -1 (final averaged values)
+    mask = substep == -1
+    
+    filtered = {}
+    for key, value in data.items():
+        if isinstance(value, np.ndarray):
+            filtered[key] = value[mask]
+        else:
+            filtered[key] = value
+    
+    return filtered
+
+
+def plot_log(data: dict, out_path: str | None, show: bool, n: int = None, title: str = "", max_time: float = 0.2) -> None:
     """Plot log up to first n samples (if n is given), else plot all, aligning lengths per subplot."""
 
     def compute_len(base, *arrays):
@@ -127,10 +153,26 @@ def plot_log(data: dict, out_path: str | None, show: bool, n: int = None) -> Non
                 L = max(0, L + n)
         return L
 
-    fig, axs = plt.subplots(5, 1, figsize=(12, 14), sharex=True)
+    # Filter data to max_time
+    t = data["time"]
+    time_mask = t <= max_time
+    
+    # Filter all arrays
+    filtered_data = {}
+    for key, value in data.items():
+        if isinstance(value, np.ndarray) and len(value) == len(t):
+            filtered_data[key] = value[time_mask]
+        else:
+            filtered_data[key] = value
+    
+    data = filtered_data
+    t = data["time"]
+
+    fig, axs = plt.subplots(6, 1, figsize=(12, 16), sharex=True)
+    if title:
+        fig.suptitle(title, fontsize=14, y=0.995)
 
     # Panel 1: lengths
-    t = data["time"]
     L = compute_len(t, data["tendon_length"], data["l_ce"], data["l_se"])
     axs[0].plot(t[:L], data["tendon_length"][:L], label="tendon_length")
     axs[0].plot(t[:L], data["l_ce"][:L], label="l_ce")
@@ -156,10 +198,17 @@ def plot_log(data: dict, out_path: str | None, show: bool, n: int = None) -> Non
     axs[3].plot(t[:L], data["l_se0"][:L], label="l_se0")
     axs[3].plot(t[:L], data["l_ce0"][:L], label="l_ce0")
     axs[3].axhline(1.0, color='k', linewidth=1, linestyle='--')
-    axs[3].legend()
-    axs[3].set_xlabel("time [s]")
+    axs[3].legend(); axs[3].set_ylabel("normalized length")
 
-    # Panel 5: Detailed FVCE internals (align lengths)
+    # Panel 5: Substeps
+    if "substep" in data and "n_substeps" in data:
+        L = compute_len(t, data["substep"], data["n_substeps"])
+        axs[4].plot(t[:L], data["substep"][:L], label="substep", marker='.', markersize=2, linestyle='-', linewidth=0.5)
+        axs[4].plot(t[:L], data["n_substeps"][:L], label="n_substeps", marker='s', markersize=3, linestyle='--', linewidth=1, alpha=0.7)
+        axs[4].legend(); axs[4].set_ylabel("substep index")
+        axs[4].set_ylim(bottom=-0.5)
+
+    # Panel 6: Detailed FVCE internals (align lengths)
     internals = [
         data.get("f_se0", np.array([])),
         data.get("f_be0", np.array([])),
@@ -173,9 +222,10 @@ def plot_log(data: dict, out_path: str | None, show: bool, n: int = None) -> Non
         labels = ["f_se0","f_be0","f_pe0","f_lce0","f_vce0"]
         for arr, label in zip(internals, labels):
             if arr.size:
-                axs[4].plot(t[:L], arr[:L], label=label)
-    axs[4].axhline(0.0, color='k', linewidth=1, linestyle='--')
-    axs[4].legend(); axs[4].set_ylabel("FL/FV terms")
+                axs[5].plot(t[:L], arr[:L], label=label)
+    axs[5].axhline(0.0, color='k', linewidth=1, linestyle='--')
+    axs[5].legend(); axs[5].set_ylabel("FL/FV terms")
+    axs[5].set_xlabel("time [s]")
 
     plt.tight_layout()
     if out_path:
@@ -189,7 +239,7 @@ def plot_log(data: dict, out_path: str | None, show: bool, n: int = None) -> Non
 def main():
     parser = argparse.ArgumentParser(description="Analyze compliant MTU CSV log")
     parser.add_argument("--log", default="compliant_mtu_log.csv", help="Path to CSV log")
-    parser.add_argument("--out", default="compliant_mtu_log_plots.png", help="Output image path")
+    parser.add_argument("--out", default="compliant_mtu_log_plots.png", help="Output image path (base name)")
     parser.add_argument("--show", default=True, action="store_true", help="Show interactive plots")
     args = parser.parse_args()
 
@@ -199,29 +249,30 @@ def main():
 
     data = load_log_csv(args.log)
 
-    # Print v_ce derivation per row, with formulas and numeric substitution
-    rows = len(data["time"])
+    # Print v_ce derivation per row, with formulas and numeric substitution (only final substeps)
+    data_final = filter_final_steps(data)
+    rows = len(data_final["time"])
     for i in range(rows):
         # guard missing fields
         try:
-            t = data["time"][i]
-            ctrl = data["ctrl"][i]
-            act = data["act"][i]
-            l_ce = data["l_ce"][i]
-            l_se = data["l_se"][i]
-            l_ce0 = data["l_ce0"][i]
-            l_se0 = data["l_se0"][i]
-            f_se0 = data["f_se0"][i]
-            f_be0 = data["f_be0"][i]
-            f_pe0 = data["f_pe0"][i]
-            f_lce0 = data["f_lce0"][i]
-            fvce_denom = data["fvce_denom"][i]
-            f_vce0 = data["f_vce0"][i]
-            v_ce0 = data["v_ce0"][i]
-            v_ce = data["v_ce"][i]
-            l_opt = data["l_opt"][i] if data.get("l_opt") is not None and len(data.get("l_opt"))>i else float('nan')
-            l_slack = data["l_slack"][i] if data.get("l_slack") is not None and len(data.get("l_slack"))>i else float('nan')
-            v_max = data["v_max"][i] if data.get("v_max") is not None and len(data.get("v_max"))>i else float('nan')
+            t = data_final["time"][i]
+            ctrl = data_final["ctrl"][i]
+            act = data_final["act"][i]
+            l_ce = data_final["l_ce"][i]
+            l_se = data_final["l_se"][i]
+            l_ce0 = data_final["l_ce0"][i]
+            l_se0 = data_final["l_se0"][i]
+            f_se0 = data_final["f_se0"][i]
+            f_be0 = data_final["f_be0"][i]
+            f_pe0 = data_final["f_pe0"][i]
+            f_lce0 = data_final["f_lce0"][i]
+            fvce_denom = data_final["fvce_denom"][i]
+            f_vce0 = data_final["f_vce0"][i]
+            v_ce0 = data_final["v_ce0"][i]
+            v_ce = data_final["v_ce"][i]
+            l_opt = data_final["l_opt"][i] if data_final.get("l_opt") is not None and len(data_final.get("l_opt"))>i else float('nan')
+            l_slack = data_final["l_slack"][i] if data_final.get("l_slack") is not None and len(data_final.get("l_slack"))>i else float('nan')
+            v_max = data_final["v_max"][i] if data_final.get("v_max") is not None and len(data_final.get("v_max"))>i else float('nan')
             # equations
             print(f"\n[t={t:.6f}] v_ce computation")
             print(f"  l_ce0 = l_ce / l_opt = {l_ce:.6f} / {l_opt:.6f} = {l_ce0:.6f}")
@@ -238,7 +289,21 @@ def main():
             # skip incomplete rows
             continue
 
-    plot_log(data, args.out, args.show, n=-4)
+    # Generate output paths
+    base_path = args.out
+    if base_path.endswith('.png'):
+        base_path = base_path[:-4]
+    
+    out_final = f"{base_path}_final.png"
+    out_all = f"{base_path}_all.png"
+
+    # Plot final substeps only
+    print(f"\nPlotting final substeps only...")
+    plot_log(data_final, out_final, args.show, n=-4, title="Final Substeps Only")
+    
+    # Plot all substeps
+    print(f"\nPlotting all substeps...")
+    plot_log(data, out_all, args.show, n=-4, title="All Substeps")
 
 
 if __name__ == "__main__":

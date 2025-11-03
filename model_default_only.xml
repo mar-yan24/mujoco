@@ -12,10 +12,10 @@
     
     <!-- Standard muscle for comparison -->
     <default class="standard_muscle">
-      <general biasprm="0.1628 1.1024 575.376 1 0 1.50093 10 1.38182 1.4 0" biastype="muscle" 
+      <general biasprm="0.1 0.5 1500 1 0 1.99579 10 1.86621 1.4 0" biastype="muscle" 
                ctrllimited="true" ctrlrange="0 1" 
                dynprm="0.01 0.04 0 0 0 0 0 0 0 0" dyntype="muscle" 
-               gainprm="0.1628 1.1024 575.376 1 0 1.50093 10 1.38182 1.4 0" 
+               gainprm="0.1 0.5 1500 1 0 1.99579 10 1.86621 1.4 0"
                gaintype="muscle"/>
     </default>
   </default>
@@ -25,7 +25,7 @@
     
     <!-- Fixed anchor sites for tendons -->
     <!-- <site name="fixed_c" pos="-0.15 0 0.14" size="0.005" rgba="0 0 1 1"/> -->
-    <site name="fixed_r" pos="0.15 0 0.14" size="0.005" rgba="0 1 0 1"/>
+    <site name="fixed_r" pos="0.15 0 0.24" size="0.005" rgba="0 1 0 1"/>
 
     <!-- Point masses to be pulled by muscles -->
     <!-- <body name="mass_c" pos="-0.15 0 0">
