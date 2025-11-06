@@ -1830,7 +1830,7 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   const mjtNum v_threshold_low = 0.1;   // Below this, use minimum substeps
   const mjtNum v_threshold_high = 0.8;  // Above this, use maximum substeps
   
-  int n_substeps = 10;
+  int n_substeps = m->opt.cmtu_iter;
   // if (v_ce_ratio <= v_threshold_low) {
   //   n_substeps = n_substeps_min;
   // } else if (v_ce_ratio >= v_threshold_high) {

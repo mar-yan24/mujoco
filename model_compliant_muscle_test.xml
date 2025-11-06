@@ -1,5 +1,5 @@
 <mujoco model="compliant_muscle_test">
-  <option timestep="0.001" gravity="0 0 -9.81"/>
+  <option timestep="0.001" gravity="0 0 -9.81" cmtu_iter="10"/>
 
   <default>
     <!-- Compliant muscle default class -->

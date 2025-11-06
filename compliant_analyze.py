@@ -299,11 +299,11 @@ def main():
 
     # Plot final substeps only
     print(f"\nPlotting final substeps only...")
-    plot_log(data_final, out_final, args.show, n=-4, title="Final Substeps Only")
+    plot_log(data_final, out_final, args.show, n=None, title="Final Substeps Only", max_time=10)
     
     # Plot all substeps
     print(f"\nPlotting all substeps...")
-    plot_log(data, out_all, args.show, n=-4, title="All Substeps")
+    plot_log(data, out_all, args.show, n=None, title="All Substeps", max_time=10)
 
 
 if __name__ == "__main__":

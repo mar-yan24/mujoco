@@ -502,6 +502,9 @@ struct mjOption_ {                // physics options
   // sdf collision settings
   int sdf_initpoints;             // number of starting points for gradient descent
   int sdf_iterations;             // max number of iterations for gradient descent
+  
+  // compliant muscle/tendon settings
+  int cmtu_iter;                  // max number of iterations for compliant MTU substeps
 };
 typedef struct mjOption_ mjOption;
 

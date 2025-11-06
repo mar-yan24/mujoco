@@ -107,13 +107,13 @@ const char* MJCF[nMJCF][mjXATTRNUM] = {
             "inttotal", "interval", "tolrange"},
     {">"},
 
-    {"option", "*", "27",
+    {"option", "*", "28",
         "timestep", "apirate", "impratio", "tolerance", "ls_tolerance", "noslip_tolerance",
         "ccd_tolerance", "gravity", "wind", "magnetic", "density", "viscosity",
         "o_margin", "o_solref", "o_solimp", "o_friction",
         "integrator", "cone", "jacobian",
         "solver", "iterations", "ls_iterations", "noslip_iterations", "ccd_iterations",
-        "sdf_iterations", "sdf_initpoints", "actuatorgroupdisable"},
+        "sdf_iterations", "sdf_initpoints", "cmtu_iter", "actuatorgroupdisable"},
     {"<"},
         {"flag", "?", "23", "constraint", "equality", "frictionloss", "limit", "contact",
             "passive", "gravity", "clampctrl", "warmstart",
@@ -1113,6 +1113,7 @@ void mjXReader::Option(XMLElement* section, mjOption* opt) {
   ReadAttrInt(section, "ccd_iterations", &opt->ccd_iterations);
   ReadAttrInt(section, "sdf_iterations", &opt->sdf_iterations);
   ReadAttrInt(section, "sdf_initpoints", &opt->sdf_initpoints);
+  ReadAttrInt(section, "cmtu_iter", &opt->cmtu_iter);
 
   // actuatorgroupdisable
   constexpr int num_bitflags = 31;

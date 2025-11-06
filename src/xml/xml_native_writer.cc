@@ -1016,6 +1016,7 @@ void mjXWriter::Option(XMLElement* root) {
   WriteAttrInt(section, "ccd_iterations", model->option.ccd_iterations, opt.ccd_iterations);
   WriteAttrInt(section, "sdf_iterations", model->option.sdf_iterations, opt.sdf_iterations);
   WriteAttrInt(section, "sdf_initpoints", model->option.sdf_initpoints, opt.sdf_initpoints);
+  WriteAttrInt(section, "cmtu_iter", model->option.cmtu_iter, opt.cmtu_iter);
 
   // actuator group disable
   int disabled_groups[31];
