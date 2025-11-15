@@ -1612,6 +1612,18 @@ typedef struct {
   mjtNum E_REF;      // Reference strain
 } mjCompliantMuscleParams;
 
+// State vector for RK4 integration of muscle dynamics
+typedef struct {
+  mjtNum A;      // Activation
+  mjtNum l_ce;   // Contractile element length
+} mjMuscleState;
+
+// Derivative vector for muscle dynamics
+typedef struct {
+  mjtNum dA_dt;      // Activation derivative (from ECC dynamics)
+  mjtNum dl_ce_dt;   // Contractile element velocity (v_ce)
+} mjMuscleDerivative;
+
 void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id, 
                                      mjCompliantMuscleParams* params) {
   mjtNum* gainprm = m->actuator_gainprm + mjNGAIN * actuator_id;
@@ -1726,39 +1738,49 @@ void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id,
 }
 
 
-// ECC (Excitation-Contraction Coupling) dynamics
-mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep) {
+// ECC (Excitation-Contraction Coupling) dynamics - compute activation derivative
+static mjtNum mju_compliantMuscleECCDerivative(mjtNum S, mjtNum A) {
   // ECC parameters (from seungmoon_muscle.py)
   mjtNum TAU_ACT = 0.01;    // Activation time constant
   mjtNum TAU_DACT = 0.04;   // Deactivation time constant
-  
+
   // Clamp S to valid range [0.0, 1.0] (allow true zero-excitation baseline)
   S = mju_clip(S, 0.01, 1.0);
-  
+
   // Choose time constant based on activation direction
   mjtNum tau = (S > A) ? TAU_ACT : TAU_DACT;
-  
+
   // ECC dynamics: dA/dt = (S - A) / tau
-  mjtNum act_dot = (S - A) / tau;
-  
+  return (S - A) / tau;
+}
+
+// ECC (Excitation-Contraction Coupling) dynamics - Euler step for backward compatibility
+mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep) {
+  mjtNum act_dot = mju_compliantMuscleECCDerivative(S, A);
   return A + act_dot * timestep;
 }
 
 
-// Single substep update for compliant muscle (used in multistep integration)
-static void mju_compliantMuscleSubstep(mjtNum S, mjtNum* A, mjtNum* l_ce, mjtNum* v_ce,
-                                       mjtNum l_mtu, const mjCompliantMuscleParams* params,
-                                       mjtNum timestep_sub) {
-  // ECC: update activation with substep timestep
-  *A = mju_compliantMuscleECC(S, *A, timestep_sub);
-  
-  // Update muscle state
-  mjtNum l_se = l_mtu - *l_ce;
-  
+// Compute derivatives for muscle dynamics (used by RK4 integrator)
+// Returns dA/dt and dl_ce/dt (v_ce) at the current state
+static void mju_compliantMuscleDynamicsDerivative(
+    mjtNum S,                               // Excitation signal
+    const mjMuscleState* state,             // Current state (A, l_ce)
+    mjtNum l_mtu,                           // MTU length
+    const mjCompliantMuscleParams* params,  // Muscle parameters
+    mjMuscleDerivative* deriv,              // Output: derivatives
+    mjtNum* v_ce_out) {                     // Output: v_ce value (optional)
+
+  // Activation derivative from ECC dynamics
+  deriv->dA_dt = mju_compliantMuscleECCDerivative(S, state->A);
+
+  // Compute contractile element velocity (v_ce)
+  mjtNum l_se = l_mtu - state->l_ce;
+
   // Normalized lengths
-  mjtNum l_ce0 = *l_ce / params->l_opt;
+  mjtNum l_ce0 = state->l_ce / params->l_opt;
   mjtNum l_se0 = l_se / params->l_slack;
-  
+
   // Force calculation parameters
   mjtNum W = params->W;
   mjtNum C = params->C;
@@ -1768,17 +1790,18 @@ static void mju_compliantMuscleSubstep(mjtNum S, mjtNum* A, mjtNum* l_ce, mjtNum
   mjtNum E_REF_PE = W;
   mjtNum E_REF_BE = 0.5 * W;
   mjtNum E_REF_BE2 = 1.0 - W;
-  
+
   // Force-length and force-velocity relationships
   mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
   mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, E_REF_BE, E_REF_BE2);
   mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
   mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
-  
+
   // Velocity-force relationship
-  mjtNum denom = (f_pe0 + *A * f_lce0);
+  mjtNum denom = (f_pe0 + state->A * f_lce0);
   mjtNum v_ce0;
   mjtNum f_vce0;
+
   if (denom <= 1e-12) {
     v_ce0 = 0.0;
     f_vce0 = 0.0;
@@ -1786,11 +1809,191 @@ static void mju_compliantMuscleSubstep(mjtNum S, mjtNum* A, mjtNum* l_ce, mjtNum
     f_vce0 = (f_se0 + f_be0) / denom;
     v_ce0 = mju_compliantMuscleInvFvce0(f_vce0, K, N);
   }
-  
-  // Update states with substep timestep
-  mjtNum v_ce_alpha = 1;
-  *v_ce = (1-v_ce_alpha) * *v_ce + v_ce_alpha * params->l_opt * params->v_max * v_ce0;
-  *l_ce = *l_ce + *v_ce * timestep_sub;
+
+  // Compute actual v_ce from normalized v_ce0
+  mjtNum v_ce = params->l_opt * params->v_max * v_ce0;
+
+  // dl_ce/dt = v_ce
+  deriv->dl_ce_dt = v_ce;
+
+  // Optional output of v_ce
+  if (v_ce_out) {
+    *v_ce_out = v_ce;
+  }
+}
+
+
+// RK4 (4th-order Runge-Kutta) integration step for muscle dynamics
+// Integrates both activation (A) and contractile element length (l_ce)
+static void mju_compliantMuscleRK4Step(
+    mjtNum S,                               // Excitation signal
+    mjMuscleState* state,                   // State to integrate (A, l_ce) - modified in place
+    mjtNum* v_ce,                           // Current v_ce - updated
+    mjtNum l_mtu,                           // MTU length
+    const mjCompliantMuscleParams* params,  // Muscle parameters
+    mjtNum dt) {                            // Time step
+
+  mjMuscleState k1_state, k2_state, k3_state, k4_state;
+  mjMuscleDerivative k1, k2, k3, k4;
+  mjtNum v_ce_temp;
+
+  // k1 = f(t, y)
+  mju_compliantMuscleDynamicsDerivative(S, state, l_mtu, params, &k1, &v_ce_temp);
+
+  // k2 = f(t + dt/2, y + dt*k1/2)
+  k1_state.A = state->A + 0.5 * dt * k1.dA_dt;
+  k1_state.l_ce = state->l_ce + 0.5 * dt * k1.dl_ce_dt;
+  mju_compliantMuscleDynamicsDerivative(S, &k1_state, l_mtu, params, &k2, &v_ce_temp);
+
+  // k3 = f(t + dt/2, y + dt*k2/2)
+  k2_state.A = state->A + 0.5 * dt * k2.dA_dt;
+  k2_state.l_ce = state->l_ce + 0.5 * dt * k2.dl_ce_dt;
+  mju_compliantMuscleDynamicsDerivative(S, &k2_state, l_mtu, params, &k3, &v_ce_temp);
+
+  // k4 = f(t + dt, y + dt*k3)
+  k3_state.A = state->A + dt * k3.dA_dt;
+  k3_state.l_ce = state->l_ce + dt * k3.dl_ce_dt;
+  mju_compliantMuscleDynamicsDerivative(S, &k3_state, l_mtu, params, &k4, &v_ce_temp);
+
+  // y_next = y + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
+  state->A = state->A + (dt / 6.0) * (k1.dA_dt + 2.0*k2.dA_dt + 2.0*k3.dA_dt + k4.dA_dt);
+  state->l_ce = state->l_ce + (dt / 6.0) * (k1.dl_ce_dt + 2.0*k2.dl_ce_dt + 2.0*k3.dl_ce_dt + k4.dl_ce_dt);
+
+  // Update v_ce based on final state
+  mjMuscleDerivative final_deriv;
+  mju_compliantMuscleDynamicsDerivative(S, state, l_mtu, params, &final_deriv, v_ce);
+}
+
+
+// ODE15s-style stiff solver integration step for muscle dynamics
+// This is a simplified stiff solver similar to MATLAB's ode15s, suitable for stiff muscle dynamics
+// Uses backward Euler with under-relaxed fixed-point iteration to solve: y_{n+1} = y_n + dt * f(t_{n+1}, y_{n+1})
+// Note: Full ODE15s uses variable-order NDFs; this is a simplified backward Euler approximation
+static void mju_compliantMuscleODE15sStep(
+    mjtNum S,                               // Excitation signal
+    mjMuscleState* state,                   // State to integrate (A, l_ce) - modified in place
+    mjtNum* v_ce,                           // Current v_ce - updated
+    mjtNum l_mtu,                           // MTU length
+    const mjCompliantMuscleParams* params,  // Muscle parameters
+    mjtNum dt) {                            // Time step
+
+  const int max_iterations = 50;          // Max fixed-point iterations
+  const mjtNum tolerance = 1e-6;          // Convergence tolerance
+  const mjtNum omega = 0.5;               // Under-relaxation parameter (0.5 = 50% damping to prevent oscillation)
+
+  // Save initial state
+  mjMuscleState y_n = *state;
+
+  // Initial guess: use explicit Euler for first iteration
+  mjMuscleDerivative deriv;
+  mju_compliantMuscleDynamicsDerivative(S, &y_n, l_mtu, params, &deriv, v_ce);
+  state->A = y_n.A + dt * deriv.dA_dt;
+  state->l_ce = y_n.l_ce + dt * deriv.dl_ce_dt;
+
+  // Under-relaxed fixed-point iteration: y_{n+1}^{k+1} = (1-omega)*y_{n+1}^k + omega*(y_n + dt * f(t_{n+1}, y_{n+1}^k))
+  // This prevents oscillation by blending old and new values
+  int converged = 0;
+  for (int iter = 0; iter < max_iterations; iter++) {
+    // Save previous iteration
+    mjMuscleState y_prev = *state;
+
+    // Compute derivative at current guess
+    mju_compliantMuscleDynamicsDerivative(S, state, l_mtu, params, &deriv, v_ce);
+
+    // Compute new state using backward Euler formula
+    mjMuscleState y_new;
+    y_new.A = y_n.A + dt * deriv.dA_dt;
+    y_new.l_ce = y_n.l_ce + dt * deriv.dl_ce_dt;
+
+    // Apply under-relaxation: blend previous and new values to prevent oscillation
+    state->A = (1.0 - omega) * y_prev.A + omega * y_new.A;
+    state->l_ce = (1.0 - omega) * y_prev.l_ce + omega * y_new.l_ce;
+
+    // Check convergence
+    mjtNum err_A = mju_abs(state->A - y_prev.A);
+    mjtNum err_l_ce = mju_abs(state->l_ce - y_prev.l_ce);
+    mjtNum max_err = mju_max(err_A, err_l_ce);
+
+    // Debug print to check convergence at each iteration
+    // printf("[mju_compliantMuscleODE15sStep] iter=%d, err_A=%g, err_l_ce=%g, max_err=%g\n", iter, err_A, err_l_ce, max_err);
+
+    if (max_err < tolerance) {
+      converged = 1;
+      // printf("[mju_compliantMuscleODE15sStep] Converged at iter=%d, max_err=%g\n", iter, max_err);
+      break;  // Converged
+    }
+  }
+  if (!converged) {
+    // printf("[mju_compliantMuscleODE15sStep] Did NOT converge after %d iterations (final max_err=%g)\n", max_iterations, 
+    //   mju_max(mju_abs(state->A - (state->A - (1.0 - omega)*(state->A) + omega*(y_n.A + dt*deriv.dA_dt))),
+    //           mju_abs(state->l_ce - (state->l_ce - (1.0 - omega)*(state->l_ce) + omega*(y_n.l_ce + dt*deriv.dl_ce_dt)))
+    //   )
+    // );
+  }
+
+  // Update v_ce based on final state
+  mju_compliantMuscleDynamicsDerivative(S, state, l_mtu, params, &deriv, v_ce);
+}
+
+
+// Explicit Euler integration step for muscle dynamics (baseline method)
+static void mju_compliantMuscleEulerStep(
+    mjtNum S,                               // Excitation signal
+    mjMuscleState* state,                   // State to integrate (A, l_ce) - modified in place
+    mjtNum* v_ce,                           // Current v_ce - updated
+    mjtNum l_mtu,                           // MTU length
+    const mjCompliantMuscleParams* params,  // Muscle parameters
+    mjtNum dt) {                            // Time step
+
+  // Compute derivatives at current state
+  mjMuscleDerivative deriv;
+  mju_compliantMuscleDynamicsDerivative(S, state, l_mtu, params, &deriv, v_ce);
+
+  // Explicit Euler: y_{n+1} = y_n + dt * f(t_n, y_n)
+  state->A = state->A + dt * deriv.dA_dt;
+  state->l_ce = state->l_ce + dt * deriv.dl_ce_dt;
+
+  // Update v_ce based on new state
+  mju_compliantMuscleDynamicsDerivative(S, state, l_mtu, params, &deriv, v_ce);
+}
+
+
+// Single substep update for compliant muscle with selectable integration method
+static void mju_compliantMuscleSubstep(mjtNum S, mjtNum* A, mjtNum* l_ce, mjtNum* v_ce,
+                                       mjtNum l_mtu, const mjCompliantMuscleParams* params,
+                                       mjtNum timestep_sub, mjtCMTUIntegrator integrator) {
+  // Create state vector for integration
+  mjMuscleState state;
+  state.A = *A;
+  state.l_ce = *l_ce;
+
+  // Dispatch to appropriate integrator
+  switch (integrator) {
+    case mjCMTU_EULER:
+      // Explicit Euler (fast, less accurate)
+      mju_compliantMuscleEulerStep(S, &state, v_ce, l_mtu, params, timestep_sub);
+      break;
+
+    case mjCMTU_RK4:
+      // 4th-order Runge-Kutta (slower, more accurate)
+      mju_compliantMuscleRK4Step(S, &state, v_ce, l_mtu, params, timestep_sub);
+      break;
+
+    case mjCMTU_ODE15S:
+      // ODE15s-style stiff solver (most stable for stiff systems)
+      mju_compliantMuscleODE15sStep(S, &state, v_ce, l_mtu, params, timestep_sub);
+      break;
+
+    default:
+      // Default to RK4 for safety
+      mju_compliantMuscleRK4Step(S, &state, v_ce, l_mtu, params, timestep_sub);
+      break;
+  }
+
+  // Update output states
+  *A = state.A;
+  *l_ce = state.l_ce;
+  // v_ce is already updated by the integration step
 }
 
 
@@ -1817,7 +2020,7 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   mjtNum v_ce_init = v_ce;
   
   // Step 1: Perform full step to estimate v_ce magnitude
-  mju_compliantMuscleSubstep(S, &A, &l_ce, &v_ce, l_mtu, &params, m->opt.timestep);
+  mju_compliantMuscleSubstep(S, &A, &l_ce, &v_ce, l_mtu, &params, m->opt.timestep, m->opt.cmtu_integrator);
   
   // Step 2: Determine number of substeps based on v_ce magnitude
   // Normalize v_ce by maximum possible velocity (l_opt * v_max)
@@ -1876,7 +2079,7 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   
   for (int substep = 0; substep < n_substeps; substep++) {
     // Perform substep update
-    mju_compliantMuscleSubstep(S, &A, &l_ce, &v_ce, l_mtu, &params, timestep_sub);
+    mju_compliantMuscleSubstep(S, &A, &l_ce, &v_ce, l_mtu, &params, timestep_sub, m->opt.cmtu_integrator);
     
     // Accumulate basic values for average calculation (always)
     mjtNum l_se = l_mtu - l_ce;

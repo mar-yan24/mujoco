@@ -165,9 +165,10 @@ void mj_defaultOption(mjOption* opt) {
   // sdf collisions
   opt->sdf_initpoints     = 40;
   opt->sdf_iterations     = 10;
-  
+
   // compliant MTU
   opt->cmtu_iter          = 20;
+  opt->cmtu_integrator    = mjCMTU_RK4;  // default to RK4 (good balance of speed and accuracy)
 }
 
 

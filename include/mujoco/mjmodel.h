@@ -174,6 +174,13 @@ typedef enum mjtIntegrator_ {     // integrator mode
 } mjtIntegrator;
 
 
+typedef enum mjtCMTUIntegrator_ { // compliant muscle-tendon unit integrator
+  mjCMTU_EULER        = 0,        // explicit Euler (fast, less accurate)
+  mjCMTU_RK4,                     // 4th-order Runge-Kutta (slower, more accurate)
+  mjCMTU_ODE15S                   // stiff solver similar to MATLAB's ode15s (most stable)
+} mjtCMTUIntegrator;
+
+
 typedef enum mjtCone_ {           // type of friction cone
   mjCONE_PYRAMIDAL     = 0,       // pyramidal
   mjCONE_ELLIPTIC                 // elliptic
@@ -502,9 +509,10 @@ struct mjOption_ {                // physics options
   // sdf collision settings
   int sdf_initpoints;             // number of starting points for gradient descent
   int sdf_iterations;             // max number of iterations for gradient descent
-  
+
   // compliant muscle/tendon settings
   int cmtu_iter;                  // max number of iterations for compliant MTU substeps
+  mjtCMTUIntegrator cmtu_integrator;  // integration method for compliant MTU dynamics
 };
 typedef struct mjOption_ mjOption;
 

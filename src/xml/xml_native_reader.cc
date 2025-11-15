@@ -107,13 +107,13 @@ const char* MJCF[nMJCF][mjXATTRNUM] = {
             "inttotal", "interval", "tolrange"},
     {">"},
 
-    {"option", "*", "28",
+    {"option", "*", "29",
         "timestep", "apirate", "impratio", "tolerance", "ls_tolerance", "noslip_tolerance",
         "ccd_tolerance", "gravity", "wind", "magnetic", "density", "viscosity",
         "o_margin", "o_solref", "o_solimp", "o_friction",
         "integrator", "cone", "jacobian",
         "solver", "iterations", "ls_iterations", "noslip_iterations", "ccd_iterations",
-        "sdf_iterations", "sdf_initpoints", "cmtu_iter", "actuatorgroupdisable"},
+        "sdf_iterations", "sdf_initpoints", "cmtu_iter", "cmtu_integrator", "actuatorgroupdisable"},
     {"<"},
         {"flag", "?", "23", "constraint", "equality", "frictionloss", "limit", "contact",
             "passive", "gravity", "clampctrl", "warmstart",
@@ -612,6 +612,14 @@ const mjMap integrator_map[integrator_sz] = {
   {"RK4",          mjINT_RK4},
   {"implicit",     mjINT_IMPLICIT},
   {"implicitfast", mjINT_IMPLICITFAST}
+};
+
+// compliant MTU integrator type
+const int cmtu_integrator_sz = 3;
+const mjMap cmtu_integrator_map[cmtu_integrator_sz] = {
+  {"Euler",        mjCMTU_EULER},
+  {"RK4",          mjCMTU_RK4},
+  {"ODE15s",       mjCMTU_ODE15S}
 };
 
 // cone type
@@ -1114,6 +1122,7 @@ void mjXReader::Option(XMLElement* section, mjOption* opt) {
   ReadAttrInt(section, "sdf_iterations", &opt->sdf_iterations);
   ReadAttrInt(section, "sdf_initpoints", &opt->sdf_initpoints);
   ReadAttrInt(section, "cmtu_iter", &opt->cmtu_iter);
+  MapValue(section, "cmtu_integrator", (int*)&opt->cmtu_integrator, cmtu_integrator_map, cmtu_integrator_sz);
 
   // actuatorgroupdisable
   constexpr int num_bitflags = 31;
