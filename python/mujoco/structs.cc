@@ -208,11 +208,15 @@ PYBIND11_MODULE(_structs, m) {
 
   py::class_<MjVisualHeadlightWrapper> mjVisualHeadlight(mjVisual, "Headlight");
   mjVisualHeadlight.def("__copy__", [](const MjVisualHeadlightWrapper& other) {
-    return MjVisualHeadlightWrapper(other);
+    MjVisualHeadlightWrapper result;
+    *result.get() = *other.get();
+    return result;
   });
   mjVisualHeadlight.def("__deepcopy__",
                         [](const MjVisualHeadlightWrapper& other, py::dict) {
-                          return MjVisualHeadlightWrapper(other);
+                          MjVisualHeadlightWrapper result;
+                          *result.get() = *other.get();
+                          return result;
                         });
   DefineStructFunctions(mjVisualHeadlight);
 #define X(var) \
@@ -283,11 +287,15 @@ PYBIND11_MODULE(_structs, m) {
 
   py::class_<MjVisualRgbaWrapper> mjVisualRgba(mjVisual, "Rgba");
   mjVisualRgba.def("__copy__", [](const MjVisualRgbaWrapper& other) {
-    return MjVisualRgbaWrapper(other);
+    MjVisualRgbaWrapper result;
+    *result.get() = *other.get();
+    return result;
   });
   mjVisualRgba.def("__deepcopy__",
                    [](const MjVisualRgbaWrapper& other, py::dict) {
-                     return MjVisualRgbaWrapper(other);
+                     MjVisualRgbaWrapper result;
+                     *result.get() = *other.get();
+                     return result;
                    });
   DefineStructFunctions(mjVisualRgba);
 #define X(var) DefinePyArray(mjVisualRgba, #var, &MjVisualRgbaWrapper::var)

@@ -28,12 +28,34 @@ cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G Ninja -DCMAKE_BUILD_TY
 ninja -C build -j %NUMBER_OF_PROCESSORS%
 ```
 
-## Quick rebuild (only recompile changed files)
+# Deploy(After build)
 ```bash
-ninja -C build -j %NUMBER_OF_PROCESSORS%
+.venv\Scripts\python.exe -m pip install -r python\build_requirements.txt
 ```
+git bash-create sdist
+```bash
+cd "$PROJECT_DIR"
+export PROJECT_DIR=$(pwd)
+export VIRTUAL_ENV="$PROJECT_DIR/.venv"
+export PATH="$VIRTUAL_ENV/Scripts:$PATH"
+
+cd "$PROJECT_DIR/python"
+bash make_sdist.sh
+```
+
+```bash
+cd "$PROJECT_DIR"
+export MUJOCO_PATH=$(cygpath -w "$PROJECT_DIR")
+export MUJOCO_PLUGIN_PATH=$(cygpath -w "$PROJECT_DIR/build/bin")
+
+pip wheel --no-deps --no-build-isolation \
+  "$PROJECT_DIR/python/dist/mujoco-3.3.3+son.tar.gz" \
+  -w "$PROJECT_DIR/python/dist"
+```
+
 
 # run simulate
 ```bash
 build\bin\simulate.exe
 ```
+

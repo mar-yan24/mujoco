@@ -1093,6 +1093,96 @@ static InitPyArray(T (&buf)[N], pybind11::handle owner) {
   return MjStructList<T>(buf, N, owner);
 }
 
+// ==================== INLINE SPECIALIZATIONS FOR MJVISUAL WRAPPERS ===========
+// Provide inline definitions here so that all translation units that need
+// MjWrapper<raw::MjVisualHeadlight/Rgba> constructors see them directly,
+// avoiding linker issues on MSVC when these are only defined in a separate TU.
+namespace _impl {
+
+inline MjWrapper<raw::MjVisualHeadlight>::MjWrapper()
+    : WrapperBase(new raw::MjVisualHeadlight{}),
+      ambient(InitPyArray(ptr_->ambient, owner_)),
+      diffuse(InitPyArray(ptr_->diffuse, owner_)),
+      specular(InitPyArray(ptr_->specular, owner_)) {}
+
+inline MjWrapper<raw::MjVisualHeadlight>::MjWrapper(
+    raw::MjVisualHeadlight* ptr, pybind11::handle owner)
+    : WrapperBase(ptr, owner),
+      ambient(InitPyArray(ptr_->ambient, owner_)),
+      diffuse(InitPyArray(ptr_->diffuse, owner_)),
+      specular(InitPyArray(ptr_->specular, owner_)) {}
+
+inline MjWrapper<raw::MjVisualHeadlight>::MjWrapper(
+    const MjWrapper& other)
+    : MjWrapper() {
+  *this->ptr_ = *other.ptr_;
+}
+
+inline MjWrapper<raw::MjVisualRgba>::MjWrapper()
+    : WrapperBase(new raw::MjVisualRgba{}),
+      fog(InitPyArray(ptr_->fog, owner_)),
+      haze(InitPyArray(ptr_->haze, owner_)),
+      force(InitPyArray(ptr_->force, owner_)),
+      inertia(InitPyArray(ptr_->inertia, owner_)),
+      joint(InitPyArray(ptr_->joint, owner_)),
+      actuator(InitPyArray(ptr_->actuator, owner_)),
+      actuatornegative(InitPyArray(ptr_->actuatornegative, owner_)),
+      actuatorpositive(InitPyArray(ptr_->actuatorpositive, owner_)),
+      com(InitPyArray(ptr_->com, owner_)),
+      camera(InitPyArray(ptr_->camera, owner_)),
+      light(InitPyArray(ptr_->light, owner_)),
+      selectpoint(InitPyArray(ptr_->selectpoint, owner_)),
+      connect(InitPyArray(ptr_->connect, owner_)),
+      contactpoint(InitPyArray(ptr_->contactpoint, owner_)),
+      contactforce(InitPyArray(ptr_->contactforce, owner_)),
+      contactfriction(InitPyArray(ptr_->contactfriction, owner_)),
+      contacttorque(InitPyArray(ptr_->contacttorque, owner_)),
+      contactgap(InitPyArray(ptr_->contactgap, owner_)),
+      rangefinder(InitPyArray(ptr_->rangefinder, owner_)),
+      constraint(InitPyArray(ptr_->constraint, owner_)),
+      slidercrank(InitPyArray(ptr_->slidercrank, owner_)),
+      crankbroken(InitPyArray(ptr_->crankbroken, owner_)),
+      frustum(InitPyArray(ptr_->frustum, owner_)),
+      bv(InitPyArray(ptr_->bv, owner_)),
+      bvactive(InitPyArray(ptr_->bvactive, owner_)) {}
+
+inline MjWrapper<raw::MjVisualRgba>::MjWrapper(
+    raw::MjVisualRgba* ptr, pybind11::handle owner)
+    : WrapperBase(ptr, owner),
+      fog(InitPyArray(ptr_->fog, owner_)),
+      haze(InitPyArray(ptr_->haze, owner_)),
+      force(InitPyArray(ptr_->force, owner_)),
+      inertia(InitPyArray(ptr_->inertia, owner_)),
+      joint(InitPyArray(ptr_->joint, owner_)),
+      actuator(InitPyArray(ptr_->actuator, owner_)),
+      actuatornegative(InitPyArray(ptr_->actuatornegative, owner_)),
+      actuatorpositive(InitPyArray(ptr_->actuatorpositive, owner_)),
+      com(InitPyArray(ptr_->com, owner_)),
+      camera(InitPyArray(ptr_->camera, owner_)),
+      light(InitPyArray(ptr_->light, owner_)),
+      selectpoint(InitPyArray(ptr_->selectpoint, owner_)),
+      connect(InitPyArray(ptr_->connect, owner_)),
+      contactpoint(InitPyArray(ptr_->contactpoint, owner_)),
+      contactforce(InitPyArray(ptr_->contactforce, owner_)),
+      contactfriction(InitPyArray(ptr_->contactfriction, owner_)),
+      contacttorque(InitPyArray(ptr_->contacttorque, owner_)),
+      contactgap(InitPyArray(ptr_->contactgap, owner_)),
+      rangefinder(InitPyArray(ptr_->rangefinder, owner_)),
+      constraint(InitPyArray(ptr_->constraint, owner_)),
+      slidercrank(InitPyArray(ptr_->slidercrank, owner_)),
+      crankbroken(InitPyArray(ptr_->crankbroken, owner_)),
+      frustum(InitPyArray(ptr_->frustum, owner_)),
+      bv(InitPyArray(ptr_->bv, owner_)),
+      bvactive(InitPyArray(ptr_->bvactive, owner_)) {}
+
+inline MjWrapper<raw::MjVisualRgba>::MjWrapper(
+    const MjWrapper& other)
+    : MjWrapper() {
+  *this->ptr_ = *other.ptr_;
+}
+
+}  // namespace _impl
+
 // Helpers for defining array/tuple properties in pybind11 classes.
 //
 // Defines a NumPy array property of a Python class that supports assignments.

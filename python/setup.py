@@ -257,12 +257,27 @@ class BuildCMakeExtension(build_ext.build_ext):
     cmake_module_path = os.path.join(
         os.path.dirname(__file__), 'mujoco', 'cmake'
     )
+
+    # On Windows with a multi-config generator (MSVC), CMake appends the
+    # configuration name (e.g. "Release") to LIBRARY_OUTPUT_DIRECTORY.
+    # distutils' build_temp already includes the config suffix, so if we pass
+    # build_temp directly we end up with paths like
+    #   build/temp.../Release/Release/_callbacks.cp311-win_amd64.pyd
+    # which do not match the location build_ext expects
+    #   build/temp.../Release/_callbacks.cp311-win_amd64.pyd
+    # To avoid the extra "Release" component, drop the last path element on
+    # Windows and use build_temp as-is on other platforms.
+    if platform.system() == 'Windows':
+      library_output_dir = os.path.dirname(self.build_temp)
+    else:
+      library_output_dir = self.build_temp
+
     cmake_args = [
         f'-DPython3_ROOT_DIR:PATH={sys.prefix}',
         f'-DPython3_EXECUTABLE:STRING={sys.executable}',
         f'-DCMAKE_MODULE_PATH:PATH={cmake_module_path}',
         f'-DCMAKE_BUILD_TYPE:STRING={build_cfg}',
-        f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY:PATH={self.build_temp}',
+        f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY:PATH={library_output_dir}',
         (
             f'-DCMAKE_INTERPROCEDURAL_OPTIMIZATION:BOOL={"OFF" if self.debug else "ON"}'
         ),
@@ -317,7 +332,18 @@ class BuildCMakeExtension(build_ext.build_ext):
 
   def build_extension(self, ext):
     dest_path = self.get_ext_fullpath(ext.name)
-    build_path = os.path.join(self.build_temp, os.path.basename(dest_path))
+    filename = os.path.basename(dest_path)
+
+    # On Windows with Visual Studio (multi-config generator), CMake places
+    # built extension modules under a configuration subdirectory, e.g.:
+    #   <build_temp>/Release/_callbacks.cp311-win_amd64.pyd
+    # whereas on single-config generators it uses <build_temp>/ directly.
+    if platform.system() == 'Windows':
+      build_cfg = 'Debug' if self.debug else 'Release'
+      build_path = os.path.join(self.build_temp, build_cfg, filename)
+    else:
+      build_path = os.path.join(self.build_temp, filename)
+
     shutil.copyfile(build_path, dest_path)
 
 
