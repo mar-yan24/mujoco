@@ -1555,7 +1555,7 @@ mjtNum mju_compliantMuscleInvFvce0(mjtNum f_vce0, mjtNum K, mjtNum N) {
 // force-length relationship for contractile element
 // Python (seungmoon_muscle.py):
 // def fn_f_lce0(l_ce0, w, c):
-//     f_lce0 = np.exp(ㅁc*np.abs((l_ce0-1)/(w))**3)
+//     f_lce0 = np.exp(c*np.abs((l_ce0-1)/(w))**3)
 //     return f_lce0
 mjtNum mju_compliantMuscleFlce0(mjtNum l_ce0, mjtNum w, mjtNum c) {
   mjtNum x = mju_abs((l_ce0 - 1.0) / w);
@@ -1760,6 +1760,31 @@ mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep) {
   return A + act_dot * timestep;
 }
 
+// Helper: compute normalized force-velocity factor f_vce0 with shared logic.
+// Default formulation: f_vce0 = f_se0 / (f_pe0 + A * f_lce0)
+// To test alternative formulations, modify the commented lines below.
+static mjtNum mju_compliantMuscleFvce0(
+    mjtNum f_se0, mjtNum f_pe0, mjtNum A, mjtNum f_lce0) {
+  // Default: Hill-type style  f_vce0 = f_se0 / (f_pe0 + A * f_lce0)
+  mjtNum denom = f_pe0 + A * f_lce0;
+
+  // Option 1: f_vce0 = (f_se0 - f_pe0) / (A * f_lce0)
+  // mjtNum denom = A * f_lce0;
+
+  if (denom <= 1e-12) {
+    return 0.0;
+  }
+
+  // Default: use only f_se0 in the numerator
+  mjtNum f_vce0 = f_se0 / denom;
+
+  // Option 1: use (f_se0 - f_pe0) in the numerator
+  // mjtNum f_vce0 = (f_se0 - f_pe0) / denom;
+
+  // return mju_max(0.0, f_vce0);
+  return f_vce0;
+}
+
 
 // Compute derivatives for muscle dynamics (used by RK4 integrator)
 // Returns dA/dt and dl_ce/dt (v_ce) at the current state
@@ -1798,17 +1823,8 @@ static void mju_compliantMuscleDynamicsDerivative(
   mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
 
   // Velocity-force relationship
-  mjtNum denom = (f_pe0 + state->A * f_lce0);
-  mjtNum v_ce0;
-  mjtNum f_vce0;
-
-  if (denom <= 1e-12) {
-    v_ce0 = 0.0;
-    f_vce0 = 0.0;
-  } else {
-    f_vce0 = (f_se0 + f_be0) / denom;
-    v_ce0 = mju_compliantMuscleInvFvce0(f_vce0, K, N);
-  }
+  mjtNum f_vce0 = mju_compliantMuscleFvce0(f_se0, f_pe0, state->A, f_lce0);
+  mjtNum v_ce0 = mju_compliantMuscleInvFvce0(f_vce0, K, N);
 
   // Compute actual v_ce from normalized v_ce0
   mjtNum v_ce = params->l_opt * params->v_max * v_ce0;
@@ -2013,43 +2029,8 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   
   // Use MuJoCo's computed tendon length directly
   mjtNum l_mtu = tendon_length;
-  
-  // Store initial states
-  mjtNum A_init = A;
-  mjtNum l_ce_init = l_ce;
-  mjtNum v_ce_init = v_ce;
-  
-  // Step 1: Perform full step to estimate v_ce magnitude
-  mju_compliantMuscleSubstep(S, &A, &l_ce, &v_ce, l_mtu, &params, m->opt.timestep, m->opt.cmtu_integrator);
-  
-  // Step 2: Determine number of substeps based on v_ce magnitude
-  // Normalize v_ce by maximum possible velocity (l_opt * v_max)
-  mjtNum v_ce_ratio = mju_abs(v_ce) / (params.l_opt * params.v_max + 1e-12);
-  
-  // Calculate required substeps based on velocity magnitude
-  // Higher velocity requires more substeps for stability
-  const int n_substeps_min = 1;
-  const int n_substeps_max = 20;
-  const mjtNum v_threshold_low = 0.1;   // Below this, use minimum substeps
-  const mjtNum v_threshold_high = 0.8;  // Above this, use maximum substeps
-  
-  int n_substeps = m->opt.cmtu_iter;
-  // if (v_ce_ratio <= v_threshold_low) {
-  //   n_substeps = n_substeps_min;
-  // } else if (v_ce_ratio >= v_threshold_high) {
-  //   n_substeps = n_substeps_max;
-  // } else {
-  //   // Linear interpolation between min and max
-  //   mjtNum t = (v_ce_ratio - v_threshold_low) / (v_threshold_high - v_threshold_low);
-  //   n_substeps = (int)(n_substeps_min + t * (n_substeps_max - n_substeps_min) + 0.5);
-  // }
-  
-  // Step 3: Reset to initial state and perform substeps
-  A = A_init;
-  l_ce = l_ce_init;
-  v_ce = v_ce_init;
-  
-  // Force calculation parameters for logging
+
+  // Force calculation parameters
   mjtNum W = params.W;
   mjtNum C = params.C;
   mjtNum N = params.N;
@@ -2058,146 +2039,59 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   mjtNum E_REF_PE = W;
   mjtNum E_REF_BE = 0.5 * W;
   mjtNum E_REF_BE2 = 1.0 - W;
-  
+
   // Initialize logging header if needed
   log_compliant_mtu_header_if_needed();
   g_last_time_seen = d->time;
-  
-  mjtNum timestep_sub = m->opt.timestep / n_substeps;
-  mjtNum f_se0_final = 0.0;
-  
-  // Accumulators for average calculation
-  mjtNum sum_v_ce = 0.0;
-  mjtNum sum_f_se0 = 0.0;
-  mjtNum sum_f_be0 = 0.0;
-  mjtNum sum_f_pe0 = 0.0;
-  mjtNum sum_f_lce0 = 0.0;
-  mjtNum sum_fvce_denom = 0.0;
-  mjtNum sum_f_vce0 = 0.0;
-  mjtNum sum_v_ce0 = 0.0;
-  mjtNum sum_F_mtu = 0.0;
-  
-  for (int substep = 0; substep < n_substeps; substep++) {
-    // Perform substep update
-    mju_compliantMuscleSubstep(S, &A, &l_ce, &v_ce, l_mtu, &params, timestep_sub, m->opt.cmtu_integrator);
-    
-    // Accumulate basic values for average calculation (always)
-    mjtNum l_se = l_mtu - l_ce;
-    mjtNum l_se0 = l_se / params.l_slack;
-    mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
-    
-    sum_v_ce += v_ce;
-    sum_f_se0 += f_se0;
-    
-    // Calculate detailed state for logging (only if logging is enabled)
-    if (g_compliant_mtu_log) {
-      mjtNum l_ce0 = l_ce / params.l_opt;
-      mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, E_REF_BE, E_REF_BE2);
-      mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
-      mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
-      mjtNum denom = (f_pe0 + A * f_lce0);
-      mjtNum f_vce0 = (denom <= 1e-12) ? 0.0 : (f_se0 + f_be0) / denom;
-      mjtNum v_ce0 = (denom <= 1e-12) ? 0.0 : mju_compliantMuscleInvFvce0(f_vce0, K, N);
-      mjtNum F_mtu = params.F_max * f_se0;
-      
-      // Accumulate detailed values for average calculation
-      sum_f_be0 += f_be0;
-      sum_f_pe0 += f_pe0;
-      sum_f_lce0 += f_lce0;
-      sum_fvce_denom += denom;
-      sum_f_vce0 += f_vce0;
-      sum_v_ce0 += v_ce0;
-      sum_F_mtu += F_mtu;
-      
-      // Log values at each substep
-      mjtNum force_applied = -F_mtu;
-      mjtNum time_substep = d->time + timestep_sub * (substep + 1);
 
-      fprintf(g_compliant_mtu_log,
-              "%f,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f\n",
-              time_substep,                // time (d->time + timestep_sub * (substep + 1))
-              actuator_id,                  // actuator_id
-              substep,                      // substep index
-              n_substeps,                   // total number of substeps
-              S,                            // ctrl (excitation signal)
-              A,                            // act (activation)
-              tendon_length,                // tendon_length
-              tendon_velocity,              // tendon_velocity
-              m->actuator_trntype[actuator_id],  // trntype
-              d->moment_rownnz[actuator_id],     // moment_rownnz
-              l_ce,                         // l_ce
-              v_ce,                         // v_ce
-              l_se,                         // l_se
-              F_mtu,                        // F_mtu
-              l_ce0,                        // l_ce0
-              l_se0,                        // l_se0
-              f_se0,                        // f_se0
-              f_be0,                        // f_be0
-              f_pe0,                        // f_pe0
-              f_lce0,                       // f_lce0
-              denom,                        // fvce_denom
-              f_vce0,                       // f_vce0
-              v_ce0,                        // v_ce0
-              force_applied,                // force_applied
-              params.F_max,                 // F_max
-              params.l_opt,                 // l_opt
-              params.l_slack,               // l_slack
-              params.v_max);                // v_max
-      fflush(g_compliant_mtu_log);
-    }
-  }
-  
-  // Calculate averages (only for velocity and force-related values)
-  mjtNum avg_v_ce = (n_substeps > 0) ? (sum_v_ce / n_substeps) : v_ce;
-  mjtNum avg_f_se0 = (n_substeps > 0) ? (sum_f_se0 / n_substeps) : 0.0;
-  
-  // Final values for length (position) - use final substep values
-  mjtNum l_se_final = l_mtu - l_ce;
-  mjtNum l_ce_final = l_ce;
-  mjtNum l_ce0_final = l_ce_final / params.l_opt;
-  mjtNum l_se0_final = l_se_final / params.l_slack;
-  
-  // Use averaged f_se0 for final F_mtu
-  f_se0_final = avg_f_se0;
-  
-  // Log final averaged values (only if logging is enabled)
-  if (g_compliant_mtu_log && n_substeps > 0) {
-    mjtNum avg_f_be0 = sum_f_be0 / n_substeps;
-    mjtNum avg_f_pe0 = sum_f_pe0 / n_substeps;
-    mjtNum avg_f_lce0 = sum_f_lce0 / n_substeps;
-    mjtNum avg_fvce_denom = sum_fvce_denom / n_substeps;
-    mjtNum avg_f_vce0 = sum_f_vce0 / n_substeps;
-    mjtNum avg_v_ce0 = sum_v_ce0 / n_substeps;
-    mjtNum avg_F_mtu = sum_F_mtu / n_substeps;
-    mjtNum avg_force_applied = -avg_F_mtu;
-    
-    // Log final averaged values (lengths use final values, others use averaged)
+  // Perform single integration step for the full timestep
+  mju_compliantMuscleSubstep(S, &A, &l_ce, &v_ce, l_mtu, &params, m->opt.timestep, m->opt.cmtu_integrator);
+
+  // Calculate all values once (used for both logging and final state)
+  mjtNum l_se = l_mtu - l_ce;
+  mjtNum l_ce0 = l_ce / params.l_opt;
+  mjtNum l_se0 = l_se / params.l_slack;
+  mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
+  mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, E_REF_BE, E_REF_BE2);
+  mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
+  mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
+  mjtNum f_vce0 = mju_compliantMuscleFvce0(f_se0, f_pe0, A, f_lce0);
+  // mjtNum denom = A * f_lce0;
+  mjtNum v_ce0 = mju_compliantMuscleInvFvce0(f_vce0, K, N);
+  // mjtNum F_mtu = params.F_max * f_se0;
+  mjtNum F_mtu = params.F_max * (f_pe0 + A * f_lce0 * f_vce0);//f_pe + f_ce = f_se
+  // mjtNum F_mtu = params.F_max * (f_se0 + f_pe0 + A * f_lce0 * f_vce0)/2;//f_pe + f_ce = f_se
+
+  // Log values (if logging is enabled)
+  if (g_compliant_mtu_log) {
+    mjtNum force_applied = -F_mtu;
+
     fprintf(g_compliant_mtu_log,
             "%f,%d,%d,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f\n",
-            d->time + m->opt.timestep,      // time (main timestep time)
+            d->time + m->opt.timestep,      // time
             actuator_id,                    // actuator_id
-            -1,                              // substep index (-1 indicates final average)
-            n_substeps,                     // total number of substeps
+            0,                              // substep index (always 0 now)
+            1,                              // total number of substeps (always 1 now)
             S,                              // ctrl (excitation signal)
             A,                              // act (activation)
             tendon_length,                  // tendon_length
             tendon_velocity,                // tendon_velocity
             m->actuator_trntype[actuator_id],  // trntype
             d->moment_rownnz[actuator_id],     // moment_rownnz
-            l_ce_final,                     // l_ce (final value)
-            avg_v_ce,                       // v_ce (averaged)
-            l_se_final,                     // l_se (final value)
-            avg_F_mtu,                      // F_mtu (averaged)
-            l_ce0_final,                    // l_ce0 (final value)
-            l_se0_final,                    // l_se0 (final value)
-            avg_f_se0,                      // f_se0 (averaged)
-            avg_f_be0,                      // f_be0 (averaged)
-            avg_f_pe0,                      // f_pe0 (averaged)
-            avg_f_lce0,                     // f_lce0 (averaged)
-            avg_fvce_denom,                 // fvce_denom (averaged)
-            avg_f_vce0,                     // f_vce0 (averaged)
-            avg_v_ce0,                      // v_ce0 (averaged)
-            avg_force_applied,              // force_applied (averaged)
+            l_ce,                           // l_ce
+            v_ce,                           // v_ce
+            l_se,                           // l_se
+            F_mtu,                          // F_mtu
+            l_ce0,                          // l_ce0
+            l_se0,                          // l_se0
+            f_se0,                          // f_se0
+            f_be0,                          // f_be0
+            f_pe0,                          // f_pe0
+            f_lce0,                         // f_lce0
+            0,                          // fvce_denom
+            f_vce0,                         // f_vce0
+            v_ce0,                          // v_ce0
+            force_applied,                  // force_applied
             params.F_max,                   // F_max
             params.l_opt,                   // l_opt
             params.l_slack,                 // l_slack
@@ -2209,12 +2103,10 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   if (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) {
     d->act[act_last] = A;
   }
-  
-  // Final muscle state
-  d->muscle_l_se[actuator_id] = l_se_final;
 
-  // Store final states (v_ce and F_mtu use averaged values, l_ce uses final value)
-  d->muscle_v_ce[actuator_id] = avg_v_ce;
-  d->muscle_l_ce[actuator_id] = l_ce_final;
-  d->muscle_F_mtu[actuator_id] = params.F_max * avg_f_se0;
+  // Store final states (using calculated values directly - no averaging needed)
+  d->muscle_l_ce[actuator_id] = l_ce;
+  d->muscle_l_se[actuator_id] = l_se;
+  d->muscle_v_ce[actuator_id] = v_ce;
+  d->muscle_F_mtu[actuator_id] = F_mtu;
 }
