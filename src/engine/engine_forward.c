@@ -352,7 +352,7 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       // ECC dynamics (Song): tau depends on whether S>A
       const mjtNum TAU_ACT = 0.01;   // [s]
       const mjtNum TAU_DACT = 0.04;  // [s]
-      mjtNum S = mju_clip(ctrl[i], 0.01, 1.0);
+      mjtNum S = mju_clip(ctrl[i], 0.0, 1.0);
       mjtNum A = d->act[act_last];
       mjtNum tau = (S > A) ? TAU_ACT : TAU_DACT;
       d->act_dot[act_last] = (S - A) / mju_max(mjMINVAL, tau);
