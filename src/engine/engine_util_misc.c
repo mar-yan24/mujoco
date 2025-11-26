@@ -39,7 +39,7 @@ static void log_compliant_mtu_header_if_needed(void) {
               "time,actuator_id,ctrl,act,tendon_length,tendon_velocity,trntype,moment_rownnz,"
               "l_ce,v_ce,l_se,F_mtu,"
               "l_ce0,l_se0,f_se0,f_be0,f_pe0,f_lce0,fvce_denom,f_vce0,v_ce0,f_vce0_forward,"
-              "force_applied,force_balance_error,F_max,l_opt,l_slack,v_max\n");
+              "force_applied,force_balance_error,F_max,l_opt,l_slack,v_max,iterations\n");
       fflush(g_compliant_mtu_log);
     }
   }
@@ -1982,7 +1982,7 @@ static void mju_compliantMuscleRK4Step(
 // Note: Full ODE15s uses variable-order NDFs; this is a simplified backward Euler approximation
 // Integrates contractile element length (l_ce) only
 // Activation (A) is updated separately by MuJoCo's nextActivation() using act_dot
-static void mju_compliantMuscleODE15sStep(
+static int mju_compliantMuscleNewtonStep(
     mjtNum S,                               // Excitation signal
     mjtNum A,                               // Current activation (constant)
     mjtNum* l_ce,                           // Contractile element length - modified in place
@@ -2014,7 +2014,8 @@ static void mju_compliantMuscleODE15sStep(
   mjtNum E_REF_PE = W;
 
   int converged = 0;
-  for (int iter = 0; iter < max_iterations; iter++) {
+  int iter = 0;
+  for (; iter < max_iterations; iter++) {
     // --- 1. Evaluate Residual at current guess ---
     mjtNum l_se = l_mtu - l_ce_curr;
     mjtNum residual = 0.0;
@@ -2107,6 +2108,8 @@ static void mju_compliantMuscleODE15sStep(
   // Final update
   *l_ce = l_ce_curr;
   *v_ce = (*l_ce - l_ce_prev) / dt;
+
+  return iter;
 }
 
 
@@ -2129,38 +2132,6 @@ static void mju_compliantMuscleEulerStep(
   // Note: activation (A) is updated separately by MuJoCo's nextActivation() using act_dot,
   // so we only update l_ce here
   *l_ce = *l_ce + dt * deriv.dl_ce_dt;
-}
-
-
-// Single substep update for compliant muscle with selectable integration method
-static void mju_compliantMuscleSubstep(mjtNum S, mjtNum* A, mjtNum* l_ce, mjtNum* v_ce,
-                                       mjtNum l_mtu, mjtNum v_mtu,
-                                       const mjCompliantMuscleParams* params,
-                                       mjtNum timestep_sub, mjtCMTUIntegrator integrator) {
-  // Dispatch to appropriate integrator
-  // Note: activation (A) is not updated here - it's updated separately by MuJoCo's nextActivation()
-  switch (integrator) {
-    case mjCMTU_EULER:
-      // Explicit Euler (fast, less accurate)
-      mju_compliantMuscleEulerStep(S, *A, l_ce, v_ce, l_mtu, v_mtu, params, timestep_sub);
-      break;
-
-    case mjCMTU_RK4:
-      // 4th-order Runge-Kutta (slower, more accurate)
-      mju_compliantMuscleRK4Step(S, *A, l_ce, v_ce, l_mtu, v_mtu, params, timestep_sub);
-      break;
-
-    case mjCMTU_ODE15S:
-      // ODE15s-style stiff solver (most stable for stiff systems)
-      mju_compliantMuscleODE15sStep(S, *A, l_ce, v_ce, l_mtu, v_mtu, params, timestep_sub);
-      break;
-
-    default:
-      // Default to RK4 for safety
-      mju_compliantMuscleRK4Step(S, *A, l_ce, v_ce, l_mtu, v_mtu, params, timestep_sub);
-      break;
-  }
-  // l_ce and v_ce are already updated by the integration step
 }
 
 
@@ -2197,7 +2168,7 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   g_last_time_seen = d->time;
 
   // Perform single integration step for the full timestep
-  mju_compliantMuscleSubstep(S, &A, &l_ce, &v_ce, l_mtu, v_mtu, &params, m->opt.timestep, m->opt.cmtu_integrator);
+  int iterations = mju_compliantMuscleNewtonStep(S, A, &l_ce, &v_ce, l_mtu, v_mtu, &params, m->opt.timestep);
 
   // Calculate all values once (used for both logging and final state)
   mjtNum l_se = l_mtu - l_ce;
@@ -2239,7 +2210,7 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
     mjtNum force_applied = -F_mtu;
 
     fprintf(g_compliant_mtu_log,
-            "%f,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f\n",
+            "%f,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%d\n",
             d->time + m->opt.timestep,      // time
             actuator_id,                    // actuator_id
             S,                              // ctrl (excitation signal)
@@ -2267,7 +2238,8 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
             params.F_max,                   // F_max
             params.l_opt,                   // l_opt
             params.l_slack,                 // l_slack
-            params.v_max);                  // v_max
+            params.v_max,                   // v_max
+            iterations);                    // iterations
     fflush(g_compliant_mtu_log);
   }
   

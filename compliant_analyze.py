@@ -57,6 +57,7 @@ def load_log_csv(path: str):
     v_ce0: List[float] = []
     f_vce0_forward: List[float] = []
     force_balance_error: List[float] = []
+    iterations: List[int] = []
 
     with open(path, "r", newline="") as f:
         reader = csv.DictReader(f)
@@ -84,6 +85,7 @@ def load_log_csv(path: str):
             f_vce0_forward.append(_to_float_or_nan(row.get("f_vce0_forward", "")))
             force_applied.append(_to_float_or_nan(row.get("force_applied", "")))
             force_balance_error.append(_to_float_or_nan(row.get("force_balance_error", "")))
+            iterations.append(_to_int_or_neg1(row.get("iterations", "")))
             F_max_row.append(_to_float_or_nan(row.get("F_max", "")))
             l_opt_row.append(_to_float_or_nan(row.get("l_opt", "")))
             l_slack_row.append(_to_float_or_nan(row.get("l_slack", "")))
@@ -112,6 +114,7 @@ def load_log_csv(path: str):
         "v_ce0": np.array(v_ce0),
         "f_vce0_forward": np.array(f_vce0_forward),
         "force_balance_error": np.array(force_balance_error),
+        "iterations": np.array(iterations),
         # parameters appended to each row end
         "F_max": np.array(F_max_row),
         "l_opt": np.array(l_opt_row),
@@ -153,7 +156,7 @@ def plot_log(data: dict, out_path: str | None, show: bool, n: int = None, title:
     data = filtered_data
     t = data["time"]
 
-    fig, axs = plt.subplots(7, 1, figsize=(12, 18), sharex=True)
+    fig, axs = plt.subplots(8, 1, figsize=(12, 20), sharex=True)
     if title:
         fig.suptitle(title, fontsize=14, y=0.995)
 
@@ -217,8 +220,15 @@ def plot_log(data: dict, out_path: str | None, show: bool, n: int = None, title:
                 axs[6].plot(t[:L], arr[:L], label=label)
     axs[6].axhline(0.0, color='k', linewidth=1, linestyle='--')
     axs[6].legend(); axs[6].set_ylabel("FL/FV terms")
-    axs[6].set_xlabel("time [s]")
     axs[6].set_ylim(-0.1, 1.6)
+
+    # Panel 7: Iterations
+    if "iterations" in data and data["iterations"].size:
+        L = compute_len(t, data["iterations"])
+        axs[7].plot(t[:L], data["iterations"][:L], label="iterations", drawstyle='steps-post', color='purple')
+        axs[7].legend(); axs[7].set_ylabel("iterations")
+        axs[7].set_ylim(bottom=0)
+        axs[7].set_xlabel("time [s]")
 
     plt.tight_layout()
     if out_path:

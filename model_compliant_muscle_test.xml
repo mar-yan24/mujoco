@@ -1,6 +1,6 @@
 <mujoco model="compliant_muscle_test">
   <!-- cmtu_integrator: Euler, RK4, ODE15s -->
-  <option timestep="0.001" gravity="0 0 -9.81" integrator="Euler" cmtu_iter="1" cmtu_integrator="ODE15s"/>
+  <option timestep="0.001" gravity="0 0 -9.81" integrator="Euler"/>
 
   <default>
     <!-- Compliant muscle default class -->
