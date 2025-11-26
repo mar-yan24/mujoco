@@ -1993,7 +1993,7 @@ static void mju_compliantMuscleODE15sStep(
     mjtNum dt) {                            // Time step
 
   const int max_iterations = 50;          // Max fixed-point iterations
-  const mjtNum tolerance = 1e-4;          // Convergence tolerance
+  const mjtNum tolerance = 1e-5;          // Convergence tolerance
   const mjtNum omega = 0.5;               // Under-relaxation parameter (0.5 = 50% damping to prevent oscillation)
 
   // Use Newton-Raphson to solve for l_ce that satisfies force balance:
@@ -2017,6 +2017,21 @@ static void mju_compliantMuscleODE15sStep(
   for (int iter = 0; iter < max_iterations; iter++) {
     // --- 1. Evaluate Residual at current guess ---
     mjtNum l_se = l_mtu - l_ce_curr;
+    mjtNum residual = 0.0;
+    
+    // HARD CONSTRAINT: Treat tendon as rigid when slack (l_se < l_slack).
+    // If the system tries to enter slack region, we force l_se = l_slack.
+    // We project the solution to the boundary but CONTINUE the iteration 
+    // to check if active forces push it further into the active region.
+    if (l_se < l_slack) {
+        mjtNum target_l_ce = l_mtu - l_slack;
+        if (target_l_ce < 0.001) target_l_ce = 0.001; // Safety min length
+        
+        // Project to boundary
+        l_ce_curr = target_l_ce;
+        l_se = l_mtu - l_ce_curr;
+    }
+
     mjtNum l_ce0 = l_ce_curr / l_opt;
     mjtNum l_se0 = l_se / l_slack;
 
@@ -2030,7 +2045,9 @@ static void mju_compliantMuscleODE15sStep(
     mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, K, N);
 
     mjtNum f_ce0 = A * f_lce0 * f_vce0;
-    mjtNum residual = f_se0 - (f_pe0 + f_ce0);
+
+    // Standard Force Balance
+    residual = f_se0 - (f_pe0 + f_ce0);
 
     // Check convergence
     if (mju_abs(residual) < tolerance) {
@@ -2044,6 +2061,11 @@ static void mju_compliantMuscleODE15sStep(
     mjtNum l_ce_pert = l_ce_curr + eps;
 
     mjtNum l_se_p = l_mtu - l_ce_pert;
+    // If perturbation enters slack, handle it? 
+    // Generally we assume perturbation stays in same regime, 
+    // but for safety we can use normal physics or same constraint.
+    // Here we just compute physics Jacobian assuming continuity locally.
+    
     mjtNum l_ce0_p = l_ce_pert / l_opt;
     mjtNum l_se0_p = l_se_p / l_slack;
     mjtNum v_ce_p = (l_ce_pert - l_ce_prev) / dt;
@@ -2055,14 +2077,15 @@ static void mju_compliantMuscleODE15sStep(
     mjtNum f_vce0_p = mju_compliantMuscleForwardVce0(v_ce0_p, K, N);
 
     mjtNum f_ce0_p = A * f_lce0_p * f_vce0_p;
+    
     mjtNum residual_p = f_se0_p - (f_pe0_p + f_ce0_p);
 
     mjtNum J = (residual_p - residual) / eps;
 
     // --- 3. Newton Update ---
-    // Avoid division by zero
-    if (mju_abs(J) < 1e-9) {
-        J = (J < 0) ? -1e-9 : 1e-9;
+    // Avoid division by zero or extremely small gradients
+    if (mju_abs(J) < 1e-6) {
+        J = (J < 0) ? -1e-6 : 1e-6;
     }
 
     mjtNum delta = -residual / J;
@@ -2188,13 +2211,16 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
   
   // Use the same CE velocity computation as in the dynamics derivative
   // to keep behavior and logging consistent.
-  mjtNum v_ce0 = mju_compliantMuscleVce0FromVmtu(A, v_mtu, f_se0, f_pe0, f_lce0, &params);
-  v_ce = params.l_opt * params.v_max * v_ce0;
+
+  //TODO: Do we need this?
+  // mjtNum v_ce0 = mju_compliantMuscleVce0FromVmtu(A, v_mtu, f_se0, f_pe0, f_lce0, &params);
+  // v_ce = params.l_opt * params.v_max * v_ce0;
+  mjtNum v_ce0 = v_ce / (params.l_opt * params.v_max);
 
   // For logging purposes, record the corresponding force-velocity factor
   // and its forward-evaluated counterpart from v_ce0.
   mjtNum fvce_denom = A * f_lce0;
-  mjtNum f_vce0 = mju_compliantMuscleFvce0(f_se0, f_pe0, A, f_lce0, K);
+  mjtNum f_vce0 = mju_compliantMuscleFvce0(f_se0, f_pe0, A, f_lce0, K);// just for debug
   mjtNum f_vce0_forward = mju_compliantMuscleForwardVce0(v_ce0, K, N);
 
   // Compute force balance error: f_se0 - (f_pe0 + f_ce0)

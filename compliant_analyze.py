@@ -218,6 +218,7 @@ def plot_log(data: dict, out_path: str | None, show: bool, n: int = None, title:
     axs[6].axhline(0.0, color='k', linewidth=1, linestyle='--')
     axs[6].legend(); axs[6].set_ylabel("FL/FV terms")
     axs[6].set_xlabel("time [s]")
+    axs[6].set_ylim(-0.1, 1.6)
 
     plt.tight_layout()
     if out_path:
