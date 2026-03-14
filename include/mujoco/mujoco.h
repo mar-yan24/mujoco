@@ -1223,9 +1223,7 @@ MJAPI mjtNum mju_compliantMuscleFp0Ext(mjtNum l0, mjtNum e_ref, mjtNum e_ref2);
 
 // Compliant muscle state management.
 MJAPI void mju_compliantMuscleInit(const mjModel* m, mjData* d);
-MJAPI void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id, 
-                                    mjtNum phi1, mjtNum phi2);
-MJAPI void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id, 
+MJAPI void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
                                      mjtNum S, mjtNum tendon_length, mjtNum tendon_velocity);
 MJAPI mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep);
 

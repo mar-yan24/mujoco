@@ -29,7 +29,8 @@
 #include "engine/engine_util_errmem.h"
 #include "engine/engine_util_spatial.h"
 
-// simple CSV logger for compliant MTU debugging
+// CSV logger for compliant MTU debugging (compile with -DCMTU_DEBUG to enable)
+#ifdef CMTU_DEBUG
 static FILE* g_compliant_mtu_log = NULL;
 static void log_compliant_mtu_header_if_needed(void) {
   if (!g_compliant_mtu_log) {
@@ -44,9 +45,8 @@ static void log_compliant_mtu_header_if_needed(void) {
     }
   }
 }
-
-// detect time reset and abort simulation if time moves backwards
 static mjtNum g_last_time_seen = -1.0;
+#endif
 
 //------------------------------ tendon wrapping ---------------------------------------------------
 
@@ -1538,10 +1538,6 @@ mjtNum mju_sigmoid(mjtNum x) {
 //     return v_ce0
 mjtNum mju_compliantMuscleInvFvce0(mjtNum f_vce0, mjtNum K, mjtNum N) {
   if (f_vce0 <= 1) {
-    // Just try to be smooth
-    // mjtNum temp_at_1 = (1 - N)/(1 - N + 1);
-    // mjtNum return_at_1 = (temp_at_1 + 1)/(1 - 7.56*K*temp_at_1);
-    // return (f_vce0 - 1)/(K*f_vce0 + 1) + return_at_1;
     return (f_vce0 - 1)/(K*f_vce0 + 1);
   } else if (f_vce0 <= N) {
     mjtNum temp = (f_vce0 - N)/(f_vce0 - N + 1);
@@ -1610,6 +1606,8 @@ typedef struct {
   mjtNum N;          // Force-velocity parameter
   mjtNum K;          // Force-velocity parameter
   mjtNum E_REF;      // Reference strain
+  mjtNum TAU_ACT;    // Activation time constant [s]
+  mjtNum TAU_DACT;   // Deactivation time constant [s]
 } mjCompliantMuscleParams;
 
 
@@ -1619,16 +1617,10 @@ typedef struct {
   mjtNum dl_ce_dt;   // Contractile element velocity (v_ce)
 } mjMuscleDerivative;
 
-void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id, 
+void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
                                      mjCompliantMuscleParams* params) {
   mjtNum* gainprm = m->actuator_gainprm + mjNGAIN * actuator_id;
-  
-  // DEBUG:: Print raw gainprm values
-  // printf("DEBUG:: mju_compliantMuscleExtractParams - actuator_id=%d\n", actuator_id);
-  // for (int i = 0; i < mjNGAIN; i++) {
-  //   printf("DEBUG::   gainprm[%d] = %.6f\n", i, gainprm[i]);
-  // }
-  
+
   // Extract parameters in order: F_max, l_opt, l_slack, v_max, W, C, N, K, E_REF
   params->F_max = gainprm[0];
   params->l_opt = gainprm[1];
@@ -1641,18 +1633,11 @@ void mju_compliantMuscleExtractParams(const mjModel* m, int actuator_id,
   params->N = gainprm[6];
   params->K = gainprm[7];
   params->E_REF = gainprm[8];
-  
-  // DEBUG:: Print extracted parameters
-  // printf("DEBUG:: Extracted parameters:\n");
-  // printf("DEBUG::   F_max = %.6f\n", params->F_max);
-  // printf("DEBUG::   l_opt = %.6f\n", params->l_opt);
-  // printf("DEBUG::   l_slack = %.6f\n", params->l_slack);
-  // printf("DEBUG::   v_max = %.6f\n", params->v_max);
-  // printf("DEBUG::   W = %.6f\n", params->W);
-  // printf("DEBUG::   C = %.6f\n", params->C);
-  // printf("DEBUG::   N = %.6f\n", params->N);
-  // printf("DEBUG::   K = %.6f\n", params->K);
-  // printf("DEBUG::   E_REF = %.6f\n", params->E_REF);
+
+  // Read activation time constants from dynprm; fall back to defaults if unset
+  mjtNum* dynprm = m->actuator_dynprm + mjNDYN * actuator_id;
+  params->TAU_ACT = dynprm[0] > 0 ? dynprm[0] : 0.01;
+  params->TAU_DACT = dynprm[1] > 0 ? dynprm[1] : 0.04;
 }
 
 // Initialize compliant muscle states (based on Python reset function)
@@ -1686,64 +1671,19 @@ void mju_compliantMuscleInit(const mjModel* m, mjData* d) {
       // Calculate initial l_se
       mjtNum l_se = l_mtu - l_ce;
       d->muscle_l_se[i] = l_se;
-      
-      // DEBUG:: Print initialization values
-      // printf("DEBUG:: mju_compliantMuscleInit - actuator_id=%d\n", i);
-      // printf("DEBUG::   l_mtu=%.6f, l_slack=%.6f, l_ce=%.6f, l_se=%.6f\n", 
-      //        l_mtu, params.l_slack, l_ce, l_se);
     }
   }
 }
 
-// Not used
-// Initialize compliant muscle states with joint angles (more accurate reset)
-void mju_compliantMuscleReset(const mjModel* m, mjData* d, int actuator_id, 
-                              mjtNum phi1, mjtNum phi2) {
-  if (m->actuator_gaintype[actuator_id] != mjGAIN_COMPLIANT_MTU) {
-    return;
-  }
-  
-  // Extract muscle parameters
-  mjCompliantMuscleParams params;
-  mju_compliantMuscleExtractParams(m, actuator_id, &params);
-  
-  // Initialize states based on Python reset function (set activation at mapped slot)
-  int act_first = m->actuator_actadr[actuator_id];
-  int act_last = act_first + m->actuator_actnum[actuator_id] - 1;
-  if (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) {
-    d->act[act_last] = 0.0;
-  }
-  d->muscle_v_ce[actuator_id] = 0.0;        // v_ce = 0
-  d->muscle_F_mtu[actuator_id] = 0.0;       // F_mtu = 0
-  
-  // Use tendon length from MuJoCo tendon arrays
-  int tendon_id = m->actuator_trnid[2*actuator_id];
-  if (tendon_id < 0 || tendon_id >= m->ntendon) {
-    mju_error("Invalid tendon_id in mju_compliantMuscleReset for actuator %d", actuator_id);
-  }
-  mjtNum l_mtu = d->ten_length[tendon_id];
-  
-  // Calculate initial l_ce with minimum length constraint
-  mjtNum l_ce = mju_max(0.01, l_mtu - params.l_slack);
-  d->muscle_l_ce[actuator_id] = l_ce;
-  
-  // Calculate initial l_se
-  mjtNum l_se = l_mtu - l_ce;
-  d->muscle_l_se[actuator_id] = l_se;
-}
-
-
 // ECC (Excitation-Contraction Coupling) dynamics - compute activation derivative
-static mjtNum mju_compliantMuscleECCDerivative(mjtNum S, mjtNum A) {
-  // ECC parameters (from seungmoon_muscle.py)
-  mjtNum TAU_ACT = 0.01;    // Activation time constant
-  mjtNum TAU_DACT = 0.04;   // Deactivation time constant
+static mjtNum mju_compliantMuscleECCDerivative(mjtNum S, mjtNum A,
+                                                mjtNum tau_act, mjtNum tau_dact) {
 
-  // Clamp S to valid range [0.0, 1.0] (allow true zero-excitation baseline)
-  S = mju_clip(S, 0.0, 1.0);
+  // Clamp S to valid range [0.01, 1.0] matching Python reference (RNG_S = [.01, 1])
+  S = mju_clip(S, 0.01, 1.0);
 
   // Choose time constant based on activation direction
-  mjtNum tau = (S > A) ? TAU_ACT : TAU_DACT;
+  mjtNum tau = (S > A) ? tau_act : tau_dact;
 
   // ECC dynamics: dA/dt = (S - A) / tau
   return (S - A) / tau;
@@ -1751,34 +1691,25 @@ static mjtNum mju_compliantMuscleECCDerivative(mjtNum S, mjtNum A) {
 
 // ECC (Excitation-Contraction Coupling) dynamics - Euler step for backward compatibility
 mjtNum mju_compliantMuscleECC(mjtNum S, mjtNum A, mjtNum timestep) {
-  mjtNum act_dot = mju_compliantMuscleECCDerivative(S, A);
+  mjtNum act_dot = mju_compliantMuscleECCDerivative(S, A, 0.01, 0.04);
   return A + act_dot * timestep;
 }
 
-// Helper: compute normalized force-velocity factor f_vce0 with shared logic.
-// Default formulation: f_vce0 = f_se0 / (f_pe0 + A * f_lce0)
-// To test alternative formulations, modify the commented lines below.
+// Helper: compute normalized force-velocity factor f_vce0 from force balance.
+// Standard Hill model: f_se0 + f_be0 = f_pe0 + A*f_lce0*f_vce0
+// Rearranged: f_vce0 = (f_se0 + f_be0 - f_pe0) / (A * f_lce0)
 static mjtNum mju_compliantMuscleFvce0(
-    mjtNum f_se0, mjtNum f_pe0, mjtNum A, mjtNum f_lce0, mjtNum K) {
-  // Default: Hill-type style  f_vce0 = f_se0 / (f_pe0 + A * f_lce0)
-  // mjtNum denom = f_pe0 + A * f_lce0;
-
-  // Option 1: f_vce0 = (f_se0 - f_pe0) / (A * f_lce0)
+    mjtNum f_se0, mjtNum f_pe0, mjtNum f_be0, mjtNum A, mjtNum f_lce0, mjtNum K) {
   mjtNum denom = A * f_lce0;
 
   if (denom <= 1e-12) {
     return 0.0;
   }
 
-  // Default: use only f_se0 in the numerator
-  // mjtNum f_vce0 = f_se0 / denom;
-
-  // Option 1: use (f_se0 - f_pe0) in the numerator
-  mjtNum f_vce0 = (f_se0 - f_pe0) / denom;
+  mjtNum f_vce0 = (f_se0 + f_be0 - f_pe0) / denom;
 
   // Prevent f_vce0 from hitting the singular point f_vce0 = -1/K where
   // the inverse force-velocity curve has a pole (denominator K*f_vce0+1 = 0).
-  // We clamp slightly ABOVE -1/K so that the inverse remains finite.
   mjtNum f_min = -1.0 / K + 1e-6;
   if (f_vce0 < f_min) {
     f_vce0 = f_min;
@@ -1793,7 +1724,7 @@ static mjtNum mju_compliantMuscleFvce0(
 // split into three regions in velocity space:
 //   v_ce0 <= 0, 0 < v_ce0 <= 1, and v_ce0 > 1.
 static mjtNum mju_compliantMuscleForwardVce0(mjtNum v_ce0, mjtNum K, mjtNum N) {
-  // Region 1: v_ce0 <= 0 corresponds to f_vce0 <= 1
+  // Region 1: v_ce0 <= 0 corresponds to concentric (shortening), f_vce0 <= 1
   if (v_ce0 <= 0.0) {
     mjtNum denom = 1.0 - K * v_ce0;
     if (denom == 0.0) {
@@ -1802,7 +1733,7 @@ static mjtNum mju_compliantMuscleForwardVce0(mjtNum v_ce0, mjtNum K, mjtNum N) {
     return (1.0 + v_ce0) / denom;
   }
 
-  // Region 2: 0 < v_ce0 <= 1 corresponds to 1 < f_vce0 <= N
+  // Region 2: 0 < v_ce0 <= 1 corresponds to eccentric (lengthening), 1 < f_vce0 <= N
   if (v_ce0 <= 1.0) {
     mjtNum denom_t = 7.56 * K * v_ce0 + 1.0;
     if (denom_t == 0.0) {
@@ -1823,12 +1754,13 @@ static mjtNum mju_compliantMuscleForwardVce0(mjtNum v_ce0, mjtNum K, mjtNum N) {
 
 
 // Helper: compute normalized CE velocity v_ce0 from MTU velocity and/or
-// force-velocity factor f_vce0. For small force capacity, we use a passive
+// force-velocity factor f_vce0. For small force capacity, we use a passive fallback.
 static mjtNum mju_compliantMuscleVce0FromVmtu(
     mjtNum A,                               // Activation
     mjtNum v_mtu,                           // MTU velocity
     mjtNum f_se0,                           // normalized series elastic force
     mjtNum f_pe0,                           // normalized parallel elastic force
+    mjtNum f_be0,                           // normalized bearing element force
     mjtNum f_lce0,                          // normalized force-length factor
     const mjCompliantMuscleParams* params)  // Muscle parameters
 {
@@ -1846,7 +1778,7 @@ static mjtNum mju_compliantMuscleVce0FromVmtu(
   
   mjtNum v_ce0_active = v_ce0_passive;
   if (force_capacity > 1e-6) {
-    mjtNum f_vce0 = mju_compliantMuscleFvce0(f_se0, f_pe0, A, f_lce0, params->K);
+    mjtNum f_vce0 = mju_compliantMuscleFvce0(f_se0, f_pe0, f_be0, A, f_lce0, params->K);
     v_ce0_active = mju_compliantMuscleInvFvce0(f_vce0, params->K, params->N);
   }
   
@@ -1858,20 +1790,14 @@ static mjtNum mju_compliantMuscleVce0FromVmtu(
     w = 1.0;
   }
 
-  // mjtNum v_ce0 = (1.0 - w) * v_ce0_passive + w * v_ce0_active;
   mjtNum v_ce0 = v_ce0_active;
-  // mjtNum v_ce0 = v_ce0_passive;
 
   // Final safety clamp in normalized space to keep speeds reasonable.
   const mjtNum VCE0_MIN = -1.0;
   const mjtNum VCE0_MAX =  1.0;
   if (v_ce0 < VCE0_MIN) {
-    // printf("[mju_compliantMuscleVce0FromVmtu] v_ce0 clamped: %f -> %f | passive: %f, active: %f, w: %f, A: %f, f_lce0: %f (MIN)\n", 
-    //   v_ce0, VCE0_MIN, v_ce0_passive, v_ce0_active, w, A, f_lce0);
     v_ce0 = VCE0_MIN;
   } else if (v_ce0 > VCE0_MAX) {
-    // printf("[mju_compliantMuscleVce0FromVmtu] v_ce0 clamped: %f -> %f | passive: %f, active: %f, w: %f, A: %f, f_lce0: %f (MAX)\n", 
-    //   v_ce0, VCE0_MAX, v_ce0_passive, v_ce0_active, w, A, f_lce0);
     v_ce0 = VCE0_MAX;
   }
 
@@ -1892,7 +1818,7 @@ static void mju_compliantMuscleDynamicsDerivative(
     mjtNum* v_ce_out) {                     // Output: v_ce value (optional)
 
   // Activation derivative from ECC dynamics
-  deriv->dA_dt = mju_compliantMuscleECCDerivative(S, A);
+  deriv->dA_dt = mju_compliantMuscleECCDerivative(S, A, params->TAU_ACT, params->TAU_DACT);
 
   // Compute contractile element velocity (v_ce)
   mjtNum l_se = l_mtu - l_ce;
@@ -1904,8 +1830,6 @@ static void mju_compliantMuscleDynamicsDerivative(
   // Force calculation parameters
   mjtNum W = params->W;
   mjtNum C = params->C;
-  mjtNum N = params->N;
-  mjtNum K = params->K;
   mjtNum E_REF = params->E_REF;
   mjtNum E_REF_PE = W;
   mjtNum E_REF_BE = 0.5 * W;
@@ -1919,7 +1843,7 @@ static void mju_compliantMuscleDynamicsDerivative(
 
   // Compute normalized CE velocity from MTU velocity and force balance,
   // then scale to v_ce.
-  mjtNum v_ce0 = mju_compliantMuscleVce0FromVmtu(A, v_mtu, f_se0, f_pe0, f_lce0, params);
+  mjtNum v_ce0 = mju_compliantMuscleVce0FromVmtu(A, v_mtu, f_se0, f_pe0, f_be0, f_lce0, params);
   mjtNum v_ce  = params->l_opt * params->v_max * v_ce0;
 
   // dl_ce/dt = v_ce
@@ -1992,12 +1916,12 @@ static int mju_compliantMuscleNewtonStep(
     const mjCompliantMuscleParams* params,  // Muscle parameters
     mjtNum dt) {                            // Time step
 
-  const int max_iterations = 50;          // Max fixed-point iterations
-  const mjtNum tolerance = 1e-5;          // Convergence tolerance
-  const mjtNum omega = 0.5;               // Under-relaxation parameter (0.5 = 50% damping to prevent oscillation)
+  const int max_iterations = 50;
+  const mjtNum tolerance = 1e-5;
+  const mjtNum damping = 0.8;             // Damped Newton update factor
 
   // Use Newton-Raphson to solve for l_ce that satisfies force balance:
-  // F_se(l_mtu - l_ce) = F_pe(l_ce) + F_ce(l_ce, v_ce, A)
+  // f_se0 + f_be0 = f_pe0 + A*f_lce0*f_vce0  (standard Hill model)
   // where v_ce = (l_ce - l_ce_prev) / dt  (Backward Euler)
 
   mjtNum l_ce_curr = *l_ce; // Initial guess
@@ -2012,23 +1936,20 @@ static int mju_compliantMuscleNewtonStep(
   mjtNum N = params->N;
   mjtNum E_REF = params->E_REF;
   mjtNum E_REF_PE = W;
+  mjtNum E_REF_BE = 0.5 * W;
+  mjtNum E_REF_BE2 = 1.0 - W;
 
   int converged = 0;
+  mjtNum residual = 0.0;
   int iter = 0;
   for (; iter < max_iterations; iter++) {
     // --- 1. Evaluate Residual at current guess ---
     mjtNum l_se = l_mtu - l_ce_curr;
-    mjtNum residual = 0.0;
-    
+
     // HARD CONSTRAINT: Treat tendon as rigid when slack (l_se < l_slack).
-    // If the system tries to enter slack region, we force l_se = l_slack.
-    // We project the solution to the boundary but CONTINUE the iteration 
-    // to check if active forces push it further into the active region.
     if (l_se < l_slack) {
         mjtNum target_l_ce = l_mtu - l_slack;
-        if (target_l_ce < 0.001) target_l_ce = 0.001; // Safety min length
-        
-        // Project to boundary
+        if (target_l_ce < 0.001) target_l_ce = 0.001;
         l_ce_curr = target_l_ce;
         l_se = l_mtu - l_ce_curr;
     }
@@ -2041,68 +1962,60 @@ static int mju_compliantMuscleNewtonStep(
     mjtNum v_ce0 = v_ce_curr / (l_opt * params->v_max);
 
     mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
+    mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, E_REF_BE, E_REF_BE2);
     mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
     mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
     mjtNum f_vce0 = mju_compliantMuscleForwardVce0(v_ce0, K, N);
 
     mjtNum f_ce0 = A * f_lce0 * f_vce0;
 
-    // Standard Force Balance
-    residual = f_se0 - (f_pe0 + f_ce0);
+    // Force balance: f_se0 + f_be0 = f_pe0 + f_ce0
+    residual = (f_se0 + f_be0) - (f_pe0 + f_ce0);
 
     // Check convergence
     if (mju_abs(residual) < tolerance) {
       converged = 1;
-      printf("[mju_compliantMuscleSubstep] Converged at iteration %d\n", iter);
       break;
     }
 
     // --- 2. Compute Jacobian via Finite Difference ---
-    mjtNum eps = 1e-5 * l_opt; // Small perturbation
+    mjtNum eps = 1e-5 * l_opt;
     mjtNum l_ce_pert = l_ce_curr + eps;
 
     mjtNum l_se_p = l_mtu - l_ce_pert;
-    // If perturbation enters slack, handle it? 
-    // Generally we assume perturbation stays in same regime, 
-    // but for safety we can use normal physics or same constraint.
-    // Here we just compute physics Jacobian assuming continuity locally.
-    
     mjtNum l_ce0_p = l_ce_pert / l_opt;
     mjtNum l_se0_p = l_se_p / l_slack;
     mjtNum v_ce_p = (l_ce_pert - l_ce_prev) / dt;
     mjtNum v_ce0_p = v_ce_p / (l_opt * params->v_max);
 
     mjtNum f_se0_p = mju_compliantMuscleFp0(l_se0_p, E_REF);
+    mjtNum f_be0_p = mju_compliantMuscleFp0Ext(l_ce0_p, E_REF_BE, E_REF_BE2);
     mjtNum f_pe0_p = mju_compliantMuscleFp0(l_ce0_p, E_REF_PE);
     mjtNum f_lce0_p = mju_compliantMuscleFlce0(l_ce0_p, W, C);
     mjtNum f_vce0_p = mju_compliantMuscleForwardVce0(v_ce0_p, K, N);
 
     mjtNum f_ce0_p = A * f_lce0_p * f_vce0_p;
-    
-    mjtNum residual_p = f_se0_p - (f_pe0_p + f_ce0_p);
+    mjtNum residual_p = (f_se0_p + f_be0_p) - (f_pe0_p + f_ce0_p);
 
     mjtNum J = (residual_p - residual) / eps;
 
     // --- 3. Newton Update ---
-    // Avoid division by zero or extremely small gradients
     if (mju_abs(J) < 1e-6) {
         J = (J < 0) ? -1e-6 : 1e-6;
     }
 
     mjtNum delta = -residual / J;
-    
-    // Damped update for stability (especially with stiff non-linearities)
-    l_ce_curr += 0.8 * delta;
+
+    // Damped update for stability
+    l_ce_curr += damping * delta;
 
     // Clamp to valid range
     if (l_ce_curr < 0.001) l_ce_curr = 0.001;
-    // Ensure l_se doesn't go negative (though solver should handle slack)
-    if (l_ce_curr > l_mtu - 0.001) l_ce_curr = l_mtu - 0.001; 
+    if (l_ce_curr > l_mtu - 0.001) l_ce_curr = l_mtu - 0.001;
   }
-  
+
   if (!converged) {
-    // If Newton failed, fallback or warn. For now, just keep last guess.
-    // printf("Newton solver failed to converge. Residual: %g\n", residual);
+    mju_warning("CMTU Newton solver did not converge after %d iterations (residual: %g)", iter, residual);
   }
 
   // Final update
@@ -2155,101 +2068,59 @@ void mju_compliantMuscleUpdate(const mjModel* m, mjData* d, int actuator_id,
 
   // Force calculation parameters
   mjtNum W = params.W;
-  mjtNum C = params.C;
-  mjtNum N = params.N;
-  mjtNum K = params.K;
   mjtNum E_REF = params.E_REF;
-  mjtNum E_REF_PE = W;
+
+#ifdef CMTU_DEBUG
   mjtNum E_REF_BE = 0.5 * W;
   mjtNum E_REF_BE2 = 1.0 - W;
-
-  // Initialize logging header if needed
   log_compliant_mtu_header_if_needed();
   g_last_time_seen = d->time;
+#endif
 
   // Perform single integration step for the full timestep
   int iterations = mju_compliantMuscleNewtonStep(S, A, &l_ce, &v_ce, l_mtu, v_mtu, &params, m->opt.timestep);
+  (void)iterations;  // used only by CMTU_DEBUG logging
 
-  // Calculate all values once (used for both logging and final state)
+  // Calculate final state values
   mjtNum l_se = l_mtu - l_ce;
-
-  mjtNum l_ce0 = l_ce / params.l_opt;
   mjtNum l_se0 = l_se / params.l_slack;
   mjtNum f_se0 = mju_compliantMuscleFp0(l_se0, E_REF);
-  mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, E_REF_BE, E_REF_BE2);
-  mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
-  mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, C);
-  
-  // Use the same CE velocity computation as in the dynamics derivative
-  // to keep behavior and logging consistent.
-
-  //TODO: Do we need this?
-  // mjtNum v_ce0 = mju_compliantMuscleVce0FromVmtu(A, v_mtu, f_se0, f_pe0, f_lce0, &params);
-  // v_ce = params.l_opt * params.v_max * v_ce0;
-  mjtNum v_ce0 = v_ce / (params.l_opt * params.v_max);
-
-  // For logging purposes, record the corresponding force-velocity factor
-  // and its forward-evaluated counterpart from v_ce0.
-  mjtNum fvce_denom = A * f_lce0;
-  mjtNum f_vce0 = mju_compliantMuscleFvce0(f_se0, f_pe0, A, f_lce0, K);// just for debug
-  mjtNum f_vce0_forward = mju_compliantMuscleForwardVce0(v_ce0, K, N);
-
-  // Compute force balance error: f_se0 - (f_pe0 + f_ce0)
-  // where f_ce0 = A * f_lce0 * f_vce0_forward
-  mjtNum f_ce0 = A * f_lce0 * f_vce0_forward;
 
   mjtNum F_mtu = params.F_max * f_se0;
-  // mjtNum F_mtu = params.F_max * f_ce0 + f_pe0;
-  // mjtNum F_mtu = params.F_max * (f_ce0 + f_pe0 + f_se0)/2;
 
+#ifdef CMTU_DEBUG
+  {
+    mjtNum l_ce0 = l_ce / params.l_opt;
+    mjtNum E_REF_PE = W;
+    mjtNum f_be0 = mju_compliantMuscleFp0Ext(l_ce0, E_REF_BE, E_REF_BE2);
+    mjtNum f_pe0 = mju_compliantMuscleFp0(l_ce0, E_REF_PE);
+    mjtNum f_lce0 = mju_compliantMuscleFlce0(l_ce0, W, params.C);
+    mjtNum v_ce0 = v_ce / (params.l_opt * params.v_max);
+    mjtNum fvce_denom = A * f_lce0;
+    mjtNum f_vce0 = mju_compliantMuscleFvce0(f_se0, f_pe0, f_be0, A, f_lce0, params.K);
+    mjtNum f_vce0_forward = mju_compliantMuscleForwardVce0(v_ce0, params.K, params.N);
+    mjtNum f_ce0 = A * f_lce0 * f_vce0_forward;
+    mjtNum force_balance_error = (f_se0 + f_be0) - (f_pe0 + f_ce0);
 
-  mjtNum force_balance_error = f_se0 - (f_pe0 + f_ce0);
-
-  // Log values (if logging is enabled)
-  if (g_compliant_mtu_log) {
-    mjtNum force_applied = -F_mtu;
-
-    fprintf(g_compliant_mtu_log,
-            "%f,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%d\n",
-            d->time + m->opt.timestep,      // time
-            actuator_id,                    // actuator_id
-            S,                              // ctrl (excitation signal)
-            A,                              // act (activation)
-            tendon_length,                  // tendon_length
-            tendon_velocity,                // tendon_velocity
-            m->actuator_trntype[actuator_id],  // trntype
-            d->moment_rownnz[actuator_id],     // moment_rownnz
-            l_ce,                           // l_ce
-            v_ce,                           // v_ce
-            l_se,                           // l_se
-            F_mtu,                          // F_mtu
-            l_ce0,                          // l_ce0
-            l_se0,                          // l_se0
-            f_se0,                          // f_se0
-            f_be0,                          // f_be0
-            f_pe0,                          // f_pe0
-            f_lce0,                         // f_lce0
-            fvce_denom,                     // fvce_denom
-            f_vce0,                         // f_vce0
-            v_ce0,                          // v_ce0
-            f_vce0_forward,                  // f_vce0_forward
-            force_applied,                  // force_applied
-            force_balance_error,            // force_balance_error
-            params.F_max,                   // F_max
-            params.l_opt,                   // l_opt
-            params.l_slack,                 // l_slack
-            params.v_max,                   // v_max
-            iterations);                    // iterations
-    fflush(g_compliant_mtu_log);
+    if (g_compliant_mtu_log) {
+      mjtNum force_applied = -F_mtu;
+      fprintf(g_compliant_mtu_log,
+              "%f,%d,%.9f,%.9f,%.9f,%.9f,%d,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%d\n",
+              d->time + m->opt.timestep, actuator_id, S, A,
+              tendon_length, tendon_velocity,
+              m->actuator_trntype[actuator_id], d->moment_rownnz[actuator_id],
+              l_ce, v_ce, l_se, F_mtu,
+              l_ce0, l_se0, f_se0, f_be0, f_pe0, f_lce0,
+              fvce_denom, f_vce0, v_ce0, f_vce0_forward,
+              force_applied, force_balance_error,
+              params.F_max, params.l_opt, params.l_slack, params.v_max,
+              iterations);
+      fflush(g_compliant_mtu_log);
+    }
   }
-  
-  // Note: activation is updated separately by MuJoCo's nextActivation() using act_dot,
-  // so we don't store it here to avoid overwriting the integrated value
-  // if (act_first >= 0 && m->actuator_actnum[actuator_id] > 0) {
-  //   d->act[act_last] = A;
-  // }
+#endif
 
-  // Store final states (using calculated values directly - no averaging needed)
+  // Store final states
   d->muscle_l_ce[actuator_id] = l_ce;
   d->muscle_l_se[actuator_id] = l_se;
   d->muscle_v_ce[actuator_id] = v_ce;

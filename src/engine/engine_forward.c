@@ -350,12 +350,13 @@ void mj_fwdActuation(const mjModel* m, mjData* d) {
       break;
     case mjDYN_COMPLIANT_MTU: {           // compliant MTU from Song (ECC activation dynamics)
       // ECC dynamics (Song): tau depends on whether S>A
-      const mjtNum TAU_ACT = 0.01;   // [s]
-      const mjtNum TAU_DACT = 0.04;  // [s]
-      mjtNum S = mju_clip(ctrl[i], 0.0, 1.0);
+      // Read time constants from dynprm; fall back to defaults if unset (zero)
+      mjtNum TAU_ACT = prm[0] > 0 ? prm[0] : 0.01;   // [s]
+      mjtNum TAU_DACT = prm[1] > 0 ? prm[1] : 0.04;  // [s]
+      mjtNum S = mju_clip(ctrl[i], 0.01, 1.0);
       mjtNum A = d->act[act_last];
-      mjtNum tau = (S > A) ? TAU_ACT : TAU_DACT;
-      d->act_dot[act_last] = (S - A) / mju_max(mjMINVAL, tau);
+      mjtNum tau_ecc = (S > A) ? TAU_ACT : TAU_DACT;
+      d->act_dot[act_last] = (S - A) / mju_max(mjMINVAL, tau_ecc);
       break;
     }
 
